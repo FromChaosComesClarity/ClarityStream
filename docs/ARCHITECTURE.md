@@ -78,6 +78,21 @@ The engine cannot ask it to do anything the allowlist does not already permit.
 That is the point: the unprivileged side builds plans, and a bug there should
 not become a root exploit here. The refusals are tested.
 
+### Invoking it
+
+`sudo` resets `PATH` to `secure_path`, so an interpreter installed per user
+(mise, nvm, asdf) does not exist as far as root is concerned, and the helper
+fails with `node: command not found` before it reads a single step. The CLI
+therefore prints `process.execPath`, the absolute path of the interpreter
+already running, rather than the bare name.
+
+That works for development and it is not good enough to ship. A packaged
+Clarity Stream cannot assume the user's Node is reachable by root, or that the
+machine has a system Node at all: this one does not. The shipped helper needs
+either a runtime bundled beside it or a rewrite into something root can always
+run. Its allowlist logic is small enough for the second option to be
+realistic.
+
 ## Still to build
 
 - The Electron host UI over the engine: findings, the plan, an Apply button,
