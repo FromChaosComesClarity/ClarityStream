@@ -21,9 +21,24 @@
 // has to be worked out rather than read off.
 
 const fs = require('node:fs');
+const path = require('node:path');
 
 function readText(p) {
   try { return fs.readFileSync(p, 'utf8').trim(); } catch { return null; }
+}
+
+// An output is ours if the EDID the kernel hands out for it is the one we
+// wrote. Matching on the product name in the description would be close
+// enough almost always, and wrong exactly when it matters: a real monitor can
+// report any name it likes. Bytes cannot be coincidence.
+function isPhantomConnector(sysfsName, connectorName) {
+  try {
+    const live = fs.readFileSync(`/sys/class/drm/${sysfsName}/edid`);
+    const ours = fs.readFileSync(path.join('/lib/firmware/edid', `clarity-stream-${connectorName}.bin`));
+    return live.length >= 128 && ours.length >= 128 && live.subarray(0, 128).equals(ours.subarray(0, 128));
+  } catch {
+    return false;
+  }
 }
 
 // Returns the streamable outputs in Sunshine's own index order, annotated
@@ -42,6 +57,7 @@ function enumerateOutputs(facts) {
         connector: c.name,
         connectorId: idRaw === null ? null : Number(idRaw),
         preferredMode: mode,
+        isPhantom: isPhantomConnector(c.sysfs, c.name),
         monitor: monitors.find((m) => m.name === c.name) ?? null
       };
     });
@@ -56,9 +72,9 @@ function enumerateOutputs(facts) {
     index,
     ...c,
     orderKnown: c.connectorId !== null,
-    label: c.monitor
+    label: (c.monitor
       ? `${c.connector} ${c.monitor.width}x${c.monitor.height} (${c.monitor.description || 'unknown make'})`
-      : `${c.connector} ${c.preferredMode ?? ''}`.trim()
+      : `${c.connector} ${c.preferredMode ?? ''}`.trim()) + (c.isPhantom ? ' [phantom]' : '')
   }));
 }
 
@@ -67,11 +83,18 @@ function indexForConnector(facts, connectorName) {
   return found ? found.index : null;
 }
 
-// The biggest output by pixel count is the sensible default: it is almost
-// always the main display, and it is the one a person means by "my monitor".
+// The phantom wins whenever one exists. That is the entire reason it was
+// armed: streaming it leaves the desktop monitors alone and gives the client
+// exactly the resolution it asked for. Falling back to the biggest real
+// monitor would quietly undo the thing the user rebooted for.
+//
+// Otherwise the biggest output by pixel count, which is almost always the
+// main display and the one a person means by "my monitor".
 function defaultOutput(facts) {
   const outs = enumerateOutputs(facts);
   if (!outs.length) return null;
+  const phantom = outs.find((o) => o.isPhantom);
+  if (phantom) return phantom;
   const focused = outs.find((o) => o.monitor?.focused);
   if (focused) return focused;
   return outs.reduce((best, o) => {

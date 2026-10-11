@@ -13,6 +13,12 @@ packages/core/        the engine, no UI, no privilege, runnable over SSH
   phantom.js          plans the phantom display, snapshots monitor state
   bootloader.js       Limine, GRUB and systemd-boot, as drop-ins
   verify.js           measures real pixels and interprets the result
+  hypr.js             drives Hyprland: park the phantom, pin the client
+  outputs.js          which monitor Sunshine actually streams, by index
+  sunshine-apps.js    the Moonlight app list, preserving what the user owns
+  clarity-app.js      finds Clarity.AppImage instead of assuming where it is
+  phantom-service.js  the login unit that parks the phantom
+  apply.js            runs the fixes that need no root
 bin/clarity-stream    headless CLI over all of the above
 bin/clarity-stream-helper  the only part that runs as root
 apps/host/            Electron host UI
@@ -101,6 +107,8 @@ realistic.
   Clarity Stream, instead of in a browser.
 - The Couch Mode app entry, written into `apps.json` without disturbing
   entries the user added.
+- A persistent home for the parking rules that does not depend on a login
+  unit. The unit works, but it is a second thing that can be disabled.
 - Client-adaptive resolution: the client reports what it wants, the host
   regenerates the phantom EDID to match. The reboot requirement makes this
   an arm-once-per-resolution affair, so the client should pick from a small set

@@ -106,7 +106,7 @@ function probeCompositor() {
   const desktop = process.env.XDG_CURRENT_DESKTOP ?? null;
   const hyprSig = process.env.HYPRLAND_INSTANCE_SIGNATURE ?? null;
 
-  let hyprVersion = null, monitors = null, hyprPid = null;
+  let hyprVersion = null, monitors = null, hyprPid = null, workspaceList = null;
   if (which('hyprctl')) {
     const v = tryExec('hyprctl', ['version']);
     if (v.ok) hyprVersion = (v.stdout.match(/Hyprland\s+(\S+)/) || [])[1] ?? null;
@@ -122,6 +122,11 @@ function probeCompositor() {
     }
     const p = tryExec('pidof', ['Hyprland']);
     if (p.ok) hyprPid = Number(p.stdout.trim().split(/\s+/)[0]) || null;
+    const w = tryExec('hyprctl', ['-j', 'workspaces']);
+    if (w.ok) {
+      try { workspaceList = JSON.parse(w.stdout).map((x) => ({ id: x.id, monitor: x.monitor, windows: x.windows })); }
+      catch { workspaceList = null; }
+    }
   }
 
   // Which GPU is the compositor actually rendering on? The open file
@@ -141,6 +146,7 @@ function probeCompositor() {
 
   return {
     sessionType, desktop, hyprVersion, hyprPid, monitors, renderNodesOpen,
+    workspaces: workspaceList,
     isWayland: sessionType === 'wayland',
     isHyprland: /hyprland/i.test(desktop || '') || Boolean(hyprSig)
   };
@@ -237,7 +243,10 @@ function probeMoonlight() {
 
 function probePhantomSupport() {
   const paramPath = '/sys/module/drm/parameters/edid_firmware';
+  let parkService = { installed: false, enabled: 'unknown', active: 'unknown' };
+  try { parkService = require('./phantom-service').status(); } catch { /* leave defaults */ }
   return {
+    parkService,
     // The DRM core's EDID override. Present does not mean honoured by every
     // driver, which is the whole question on NVIDIA, so this only reports
     // that the knob exists.

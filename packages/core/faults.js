@@ -294,6 +294,107 @@ const FAULTS = [
   },
 
   {
+    id: 'phantom-armed-but-absent',
+    title: 'The phantom display is armed but the compositor does not have it up',
+    severity: SEVERITY.BLOCKER,
+    // Worth a blocker because of when Sunshine reads its configuration. It
+    // resolves output_name as the service starts, not as a session begins,
+    // so a phantom that is down at that moment makes every launch fail with
+    // "Couldn't find monitor [N]" and a 503 to the client, before any
+    // prep-cmd could raise it. Measured.
+    detect: (f) => {
+      const forced = /drm\.edid_firmware=/.test(f.phantom.kernelCmdline ?? '');
+      if (!forced) return null;                      // phantom-not-armed covers it
+      const outs = enumerateOutputs(f);
+      const ph = outs.find((o) => o.isPhantom);
+      if (!ph) return null;
+      if (ph.monitor) return null;                   // compositor has it
+      return {
+        evidence: `${ph.connector} carries our EDID but the compositor is not driving it.`,
+        detail: 'Sunshine binds its capture output at service start, so a phantom that is ' +
+                'down then breaks every launch. Bring it up before Sunshine.',
+        fix: { kind: 'park-phantom', connector: ph.connector }
+      };
+    }
+  },
+
+  {
+    id: 'phantom-holds-a-user-workspace',
+    title: 'The phantom display has taken one of your workspaces',
+    severity: SEVERITY.DEGRADED,
+    // Hyprland gives a new output the first free workspace. Arming a phantom
+    // therefore moves one of the user's workspaces onto a monitor they
+    // cannot see, and switching to it loses windows into the void. Observed:
+    // it took workspace 2.
+    detect: (f) => {
+      const outs = enumerateOutputs(f);
+      const ph = outs.find((o) => o.isPhantom);
+      if (!ph || !ph.monitor) return null;
+      const reserved = 11;
+      const held = (f.compositor.workspaces ?? []).filter((w) => w.monitor === ph.connector);
+      if (!held.length) return null;
+      const stranded = held.filter((w) => w.id !== reserved);
+      if (!stranded.length) return null;
+      return {
+        evidence: `${ph.connector} is holding ${stranded.map((w) => `workspace ${w.id}`).join(', ')}.`,
+        detail: 'That workspace lives on a monitor you cannot see; switching to it sends windows nowhere.',
+        fix: { kind: 'park-phantom', connector: ph.connector }
+      };
+    }
+  },
+
+  {
+    id: 'phantom-touches-the-desktop',
+    title: 'The phantom display is adjacent to a real monitor',
+    severity: SEVERITY.DEGRADED,
+    // Hyprland moves the pointer between monitors by adjacency, so a phantom
+    // placed beside the desktop catches the cursor and it disappears onto an
+    // invisible screen.
+    detect: (f) => {
+      const outs = enumerateOutputs(f);
+      const ph = outs.find((o) => o.isPhantom);
+      if (!ph || !ph.monitor) return null;
+      const others = (f.compositor.monitors ?? []).filter((m) => m.name !== ph.connector);
+      if (!others.length) return null;
+      const phLeft = ph.monitor.x;
+      const touching = others.filter((m) => {
+        const right = m.x + Math.round(m.width / (m.scale || 1));
+        return Math.abs(right - phLeft) < 2 || Math.abs(m.x - (phLeft + Math.round(ph.monitor.width / (ph.monitor.scale || 1)))) < 2;
+      });
+      if (!touching.length) return null;
+      return {
+        evidence: `${ph.connector} sits at x=${phLeft}, flush against ${touching.map((m) => m.name).join(', ')}.`,
+        detail: 'The pointer will slide onto a monitor that is not there.',
+        fix: { kind: 'park-phantom', connector: ph.connector }
+      };
+    }
+  },
+
+  {
+    id: 'phantom-not-parked-at-login',
+    title: 'The phantom will come back unparked after a reboot',
+    severity: SEVERITY.DEGRADED,
+    // Parking is runtime state. Hyprland re-reads its config on every start,
+    // and on this machine that config is rewritten by a bar panel which
+    // saves the phantom wherever it last sat. Without the login unit, every
+    // reboot restores the adjacency and the stolen workspace.
+    detect: (f) => {
+      const forced = /drm\.edid_firmware=/.test(f.phantom.kernelCmdline ?? '');
+      if (!forced) return null;
+      const svc = f.phantom.parkService ?? {};
+      if (svc.installed && svc.enabled === 'enabled') return null;
+      return {
+        evidence: svc.installed
+          ? `The park service exists but is ${svc.enabled}.`
+          : 'No login service parks the phantom.',
+        detail: 'Hyprland re-applies its config at every start, so the phantom returns ' +
+                'beside the desktop holding one of your workspaces.',
+        fix: { kind: 'install-park-service' }
+      };
+    }
+  },
+
+  {
     id: 'moonlight-missing',
     title: 'Moonlight is not installed on this machine',
     severity: SEVERITY.INFO,

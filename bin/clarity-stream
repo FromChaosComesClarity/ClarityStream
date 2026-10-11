@@ -11,6 +11,7 @@ const { planAddParams, detect: detectBootloader } = require('../packages/core/bo
 const { planArm, planDisarm, candidates, verifyArmed, restoreMonitorsCommands, toHelperPlan } = require('../packages/core/phantom');
 const verify = require('../packages/core/verify');
 const { applyAll, needsRestart, restartUserService, isPrivileged } = require('../packages/core/apply');
+const pathMod3 = require('node:path');
 
 const C = process.stdout.isTTY
   ? { r: '\x1b[31m', y: '\x1b[33m', g: '\x1b[32m', d: '\x1b[2m', b: '\x1b[1m', x: '\x1b[0m' }
@@ -73,6 +74,8 @@ function describeFix(fix) {
     case 'user-service': return `systemctl --user enable --now ${fix.unit}`;
     case 'choose-output': return `pin output_name to one of ${fix.candidates.join(', ')}`;
     case 'arm-phantom': return `force a connector on ${fix.card}: ${fix.candidates.join(' or ')}`;
+    case 'park-phantom': return `clarity-stream phantom --park`;
+    case 'install-park-service': return `clarity-stream phantom --install-service`;
     case 'modprobe-conf': return `write "${fix.line}" to ${fix.path}`;
     case 'use-phantom-instead': return 'target a forced connector rather than a headless output';
     default: return fix.kind;
@@ -177,6 +180,107 @@ function fixCmd(rest) {
   return 0;
 }
 
+function appsCmd(rest) {
+  const apply = rest.includes('--apply');
+  const prune = rest.includes('--prune-stock');
+  const sunshineApps = require('../packages/core/sunshine-apps');
+  const phantomScript = require('../packages/core/phantom-script');
+  const { enumerateOutputs } = require('../packages/core/outputs');
+  const fsMod = require('node:fs');
+  const pathMod2 = require('node:path');
+
+  const facts = probe();
+  const appsPath = facts.sunshine.appsPath;
+  let doc;
+  try { doc = sunshineApps.read(appsPath); }
+  catch (err) { console.error(`${C.r}${err.message}${C.x}`); return 1; }
+
+  console.log(`${C.b}Clarity Stream — Moonlight app list${C.x}`);
+  console.log(`${C.d}${appsPath}${C.x}\n`);
+
+  const phantom = enumerateOutputs(facts).find((o) => o.isPhantom);
+  let scriptPath = null;
+  if (phantom) {
+    const mon = phantom.monitor;
+    const opts = {
+      connector: phantom.connector,
+      // When the phantom is switched off it is absent from hyprctl, so fall
+      // back to the mode its EDID prefers rather than reporting nothing.
+      // probe.js normalises hyprctl's refreshRate to `refresh`; reading the
+      // raw hyprctl name here threw a TypeError and aborted the whole write.
+      mode: mon ? `${mon.width}x${mon.height}@${Number(mon.refresh).toFixed(2)}` : `${phantom.preferredMode ?? '1920x1080'}@60`,
+      position: mon ? `${mon.x}x${mon.y}` : 'auto',
+      scale: mon ? mon.scale : 1
+    };
+    // The phantom is NOT cycled around a stream. Sunshine resolves
+    // output_name when the service starts, not when a session begins, so a
+    // phantom that is down at that moment makes every launch fail with
+    // "Couldn't find monitor [2]" and a 503 to the client, before any
+    // prep-cmd gets the chance to run. Measured. It stays up, parked out of
+    // reach, holding a workspace of its own.
+    scriptPath = null;
+    if (apply) phantomScript.install(opts);  // kept for manual use and teardown
+    console.log(`  phantom    ${phantom.connector} at ${opts.mode}`);
+    console.log(`  ${C.d}stays up: Sunshine binds output_name at service start, so a${C.x}`);
+    console.log(`  ${C.d}phantom that is down then makes every launch fail${C.x}\n`);
+  } else {
+    console.log(`  ${C.y}no phantom armed; entries will stream whatever output_name points at${C.x}\n`);
+  }
+
+  const clarityApp = require('../packages/core/clarity-app');
+  const found = clarityApp.find();
+  const entries = [];
+  if (found.found) {
+    console.log(`  Clarity    ${found.path} ${C.d}(${found.via})${C.x}`);
+    entries.push(sunshineApps.buildEntry({
+      name: 'Clarity Couch Mode',
+      cmd: clarityApp.couchCommand(found.path),
+      phantomScript: scriptPath
+    }));
+  } else {
+    console.log(`  ${C.y}Clarity.AppImage not found, so no Couch Mode tile.${C.x}`);
+    console.log(`  ${C.d}looked in: ${found.tried.slice(0, 4).join(', ')}${C.x}`);
+  }
+
+  const stale = clarityApp.staleDesktopEntries();
+  for (const s2 of stale) {
+    console.log(`  ${C.y}note${C.x} ${pathMod2.basename(s2.file)} points at ${s2.target}, which is not there.`);
+  }
+  entries.push(sunshineApps.buildEntry({ name: 'Clarity Desktop', phantomScript: scriptPath }));
+
+  const results = entries.map((e) => sunshineApps.upsert(doc, e));
+  for (const r of results) {
+    const mark = r.action === 'unchanged' ? `${C.d}=${C.x}` : `${C.g}${r.action === 'added' ? '+' : '~'}${C.x}`;
+    console.log(`  ${mark} ${r.name}`);
+  }
+
+  const stock = sunshineApps.stockPresent(doc);
+  if (stock.length) {
+    console.log(`\n  ${C.d}Sunshine's own entries, left alone:${C.x}`);
+    for (const s2 of stock) {
+      console.log(`    ${s2.name}${s2.brokenOnWayland ? `  ${C.y}(drives xrandr, which does nothing on Wayland)${C.x}` : ''}`);
+    }
+    if (prune) {
+      const removed = sunshineApps.pruneStock(doc);
+      console.log(`  ${C.y}removing: ${removed.join(', ')}${C.x}`);
+    } else {
+      console.log(`    ${C.d}--prune-stock removes them${C.x}`);
+    }
+  }
+
+  if (!apply) {
+    console.log(`\n${C.d}Nothing was written. Re-run with --apply.${C.x}`);
+    return 0;
+  }
+  sunshineApps.write(appsPath, doc);
+  console.log(`\n${C.g}Written.${C.x} ${C.d}previous kept as ${appsPath}.clarity-stream.bak${C.x}`);
+  if (facts.sunshine.unitFound) {
+    const r = restartUserService(facts.sunshine.unitName);
+    console.log(`${facts.sunshine.unitName}  ${r.ok ? C.g + r.detail + C.x : C.r + r.detail + C.x}`);
+  }
+  return 0;
+}
+
 function verifyCmd(rest) {
   const facts = probe();
   const card = facts.gpus.find((g) => g.connectedCount > 0);
@@ -247,6 +351,60 @@ function measureCmd(rest) {
 }
 
 function phantomCmd(rest) {
+  const hypr = require('../packages/core/hypr');
+  const phantomService = require('../packages/core/phantom-service');
+  const { enumerateOutputs } = require('../packages/core/outputs');
+
+  // --park / --unpark / --install-service act on a phantom that already
+  // exists, so they run before the planning path below.
+  if (rest.includes('--park') || rest.includes('--unpark') || rest.includes('--install-service')) {
+    const waitIdx = rest.indexOf('--wait');
+    const waitSecs = waitIdx === -1 ? 0 : Number(rest[waitIdx + 1] || 30);
+
+    // graphical-session.target can be reached before the compositor answers,
+    // so wait rather than fail at login.
+    const deadline = Date.now() + waitSecs * 1000;
+    let mons = hypr.monitors();
+    while (!mons && Date.now() < deadline) {
+      try { require('node:child_process').execFileSync('sleep', ['1']); } catch { /* ignore */ }
+      mons = hypr.monitors();
+    }
+    if (!mons) { console.error('Hyprland did not answer; nothing to do.'); return 1; }
+
+    const facts2 = probe();
+    const ph = enumerateOutputs(facts2).find((o) => o.isPhantom);
+    if (!ph) { console.error('No phantom display is armed.'); return 1; }
+
+    if (rest.includes('--install-service')) {
+      const r = phantomService.install({
+        nodePath: process.execPath,
+        cliPath: pathMod3.resolve(__filename),
+        sunshineUnit: facts2.sunshine.unitName
+      });
+      console.log(`${C.b}${r.path}${C.x}`);
+      console.log(`  daemon-reload ${r.reloaded ? C.g + 'ok' + C.x : C.r + 'failed' + C.x}`);
+      console.log(`  enabled       ${r.enabled ? C.g + 'yes' + C.x : C.r + (r.detail || 'failed') + C.x}`);
+      console.log(`${C.d}It parks ${ph.connector} at login, before ${facts2.sunshine.unitName}.${C.x}`);
+      return r.enabled ? 0 : 1;
+    }
+
+    if (rest.includes('--unpark')) {
+      const r = hypr.disable(ph.connector);
+      console.log(`${ph.connector} ${r.present ? C.r + 'still up' + C.x : C.g + 'taken down' + C.x}`);
+      return r.present ? 1 : 0;
+    }
+
+    const mode = `${ph.preferredMode ?? '1920x1080'}@60`;
+    const r = hypr.park(ph.connector, { mode });
+    console.log(`${C.b}${ph.connector}${C.x} parked at ${r.position}, workspace ${r.workspace}`);
+    if (r.strandedWorkspaces.length) {
+      console.log(`  ${C.y}still holding ${r.strandedWorkspaces.map((w) => `ws${w}`).join(', ')}${C.x}`);
+    } else {
+      console.log(`  ${C.g}holds only its own workspace; none of yours are stranded${C.x}`);
+    }
+    return r.ok ? 0 : 1;
+  }
+
   const facts = probe();
   const spec = rest.find((a) => /^\d+x\d+(@\d+)?$/.test(a));
   const connector = rest.find((a) => /^(DP|HDMI)[-A-Z0-9]*$/i.test(a));
@@ -346,6 +504,7 @@ switch (cmd) {
   case 'edid': code = edidCmd(rest); break;
   case 'boot': code = bootCmd(); break;
   case 'fix': code = fixCmd(rest); break;
+  case 'apps': code = appsCmd(rest); break;
   case 'verify': code = verifyCmd(rest); break;
   case 'measure': code = measureCmd(rest); break;
   case 'phantom': code = phantomCmd(rest); break;
@@ -356,10 +515,13 @@ switch (cmd) {
     console.log('  edid <WxH[@Hz]> [f]  build a phantom display EDID');
     console.log('  fix [--apply]        apply what can be fixed without root');
   console.log('                       [--output NAME] [--no-service]');
+  console.log('  apps [--apply]       publish the Moonlight app list [--prune-stock]');
   console.log('  verify [output]      measure real pixels, prove the capture is not black');
   console.log('  measure <image>      report whether a captured frame is black');
   console.log('  phantom [WxH[@Hz]]   plan the phantom stream display');
   console.log('                       [--arm] writes a plan for the privileged helper');
+  console.log('                       [--park] park it and reserve its workspace');
+  console.log('                       [--install-service] park it at every login');
   console.log('  boot                 show how a kernel parameter would be added here');
     code = cmd ? 2 : 0;
 }

@@ -247,3 +247,100 @@ replaces every byte above 127. A mid-grey test frame measured 253 instead of
 unaffected, which is why the conclusions above still stand, but anything bright
 was being measured wrongly. Raw frames are now read as bytes, and a test
 asserts that mid grey reads as mid grey.
+
+---
+
+# Part three: the phantom display exists, and streams
+
+Added 2026-10-11, after the reboot that armed it.
+
+## It worked
+
+```
+/proc/cmdline   drm.edid_firmware=DP-3:edid/clarity-stream-DP-3.bin video=DP-3:e
+DP-3            status connected, EDID 128 bytes, byte-for-byte ours
+modes offered   1920x1080, 2560x1440, 1600x900, 1280x800, 1280x720, 1024x768
+Hyprland        DP-3 1920x1080@59.93, described as "CSTI Inc Clarity Strm"
+Sunshine        Screencasting with KMS, Found connector ID [834]
+Moonlight       launch 200, a real picture at stddev 21.34
+```
+
+NVIDIA honours `drm.edid_firmware` when, and only when, `video=<CONNECTOR>:e`
+is passed alongside it. A monitor that does not exist, at a resolution we
+chose, captured by KMS, with both real monitors untouched.
+
+The EDID comparison is what makes this conclusive rather than suggestive.
+"Connected" alone proves nothing; a connector can report connected for its own
+reasons. The bytes the kernel hands out are identical to the bytes we wrote,
+and nothing else explains that.
+
+## Three things the phantom broke, and what fixed them
+
+**It stole a workspace.** Hyprland gives a new output the first free
+workspace, so arming the phantom quietly moved workspace 2 onto a monitor
+nobody can see. Switching to it would send windows nowhere. Fixed with a
+persistent default workspace rule reserving workspace 11 for it. The rule
+alone is not enough on a monitor that is already up: it keeps whatever it
+grabbed, so the output is cycled off and on to pick the rule up.
+
+**It caught the pointer.** Hyprland moves the cursor between monitors by
+adjacency, and the phantom landed at 3652x0, flush against the ultrawide's
+right edge. Fixed by parking it 6000px clear of every real monitor, so no
+edge touches it.
+
+**It will not stay parked.** Parking is runtime state and Hyprland re-reads
+its config on every start. Worse, on this machine `~/.config/hypr/monitors.lua`
+is rewritten by a bar panel (`im0001gt.screens`), which had already saved the
+phantom into the managed block at its original adjacent position. So Clarity
+Stream does not write to that file at all. It installs its own user unit,
+`clarity-stream-phantom.service`, which parks the phantom at login.
+
+## The design that did not work, and why
+
+The obvious idea is to keep the phantom switched off and bring it up only for
+the duration of a stream, through Sunshine's `prep-cmd`. It was built, and it
+fails:
+
+```
+Error: Couldn't find monitor [2]      (x10, during encoder probing)
+Error: Couldn't find any working encoder matching [nvenc]
+Launch response: status_code="503" Failed to initialize video capture/encoding.
+```
+
+**Sunshine resolves `output_name` and probes encoders when its service
+starts, not when a session begins.** With the phantom down at that moment,
+index 2 does not exist, every encoder fails against a missing monitor, and the
+launch is refused before `prep-cmd` ever runs. The phantom has to be up
+whenever Sunshine is.
+
+That also makes the `prep-cmd` actively dangerous rather than merely useless:
+its `undo` would take the phantom down after each stream and break the next
+launch. The entries carry no prep-cmd.
+
+## Where the client opens
+
+Hyprland has no primary monitor. A client lands on the monitor at the origin,
+which here is a rotated 1440x900 panel at 0x0 while the 3440x1440 ultrawide
+starts at 900x0, so Moonlight kept opening sideways on the small screen.
+
+Fixed with `hl.window_rule({ match = "com.moonlight_stream.Moonlight", monitor = "DP-2" })`,
+applied at login by the same unit that parks the phantom. Note the spelling:
+`hl.windowrule` does not exist and answers
+`attempt to call a nil value (field 'windowrule')`, while `hl.window_rule` and
+Omarchy's own `o.window` wrapper both work.
+
+## Two more places a name was assumed
+
+The pattern from part two repeated twice more, which is why discovery is now
+the rule rather than the exception:
+
+- **Clarity moved.** `~/Clarity/Clarity.AppImage` became
+  `~/Applications/Clarity.AppImage` between sessions. A hardcoded path did not
+  error; it produced an app list with the Couch Mode tile silently missing.
+  The AppImage is searched for now. Both `clarity.desktop` and
+  `clarity-couch.desktop` still point at the old path and are therefore
+  broken, which Clarity Stream reports rather than fixes, since they are not
+  its files.
+- **Node is not on root's PATH.** `sudo` resets `PATH` to `secure_path`, and
+  this machine has no system Node, only mise's. The helper died with
+  `node: command not found`. The CLI prints `process.execPath` now.

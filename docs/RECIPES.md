@@ -31,6 +31,10 @@ The two rules are Clarity's two rules:
 | `output-not-pinned` | degraded | Sunshine is streaming a display you did not choose. `output_name` is an index for KMS capture, not a connector name, so the obvious value does nothing. |
 | `encoder-not-pinned-nvenc` | degraded | NVENC present but `encoder` unset, so encoding may land on the CPU. |
 | `phantom-not-armed` | info | No phantom display, so streaming has to use a real monitor at its real resolution. |
+| `phantom-armed-but-absent` | blocker | The EDID override is active but the compositor is not driving the output. Sunshine binds its capture output at service start, so this breaks every launch. |
+| `phantom-holds-a-user-workspace` | degraded | Hyprland gave the phantom one of your workspaces; switching to it sends windows to a screen that is not there. |
+| `phantom-touches-the-desktop` | degraded | The phantom is flush against a real monitor, so the pointer slides onto it. |
+| `phantom-not-parked-at-login` | degraded | Parking is runtime state and will be gone after a reboot. |
 | `nvenc-without-cuda` | degraded | The Sunshine build links no CUDA, so frames go GPU to RAM to GPU instead of staying in VRAM. No setting fixes it. |
 | `moonlight-missing` | info | Only matters if this machine is also a client. |
 

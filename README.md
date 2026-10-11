@@ -108,10 +108,21 @@ call after you approve it.
 
 ## Status
 
-**It works.** On the development machine, an RTX 4060 Ti on Hyprland that had
-never streamed anything but black, Clarity Stream found the faults, applied the
-fixes, and a Moonlight client decoded a real picture. The readings are in
+**It works, phantom display and all.** On the development machine, an RTX 4060
+Ti on Hyprland that had never streamed anything but black, Clarity Stream found
+the faults, applied the fixes, armed a display that does not physically exist,
+and a Moonlight client decoded a real picture of it. Both real monitors were
+untouched throughout. Every reading is in
 [docs/DIAGNOSIS.md](docs/DIAGNOSIS.md).
+
+The phantom stays up rather than being cycled around each stream, which was
+the first design and does not work: Sunshine resolves `output_name` when its
+service starts, so a phantom that is down at that moment makes every launch
+fail with `Couldn't find monitor` and a 503, before any `prep-cmd` can run.
+Instead it is parked 6000px clear of every real monitor, holding a reserved
+workspace of its own, by a login unit Clarity Stream installs. It never writes
+to the user's Hyprland config, which on this machine is rewritten by a bar
+panel anyway.
 
 Working: the probe, the fault catalogue, the diagnosis, the applier for
 everything that does not need root, lossless `sunshine.conf` editing, EDID

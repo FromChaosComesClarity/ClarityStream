@@ -14,9 +14,13 @@ const ORDER = [
   'nvidia-wlr-capture-is-black',
   'capture-aimed-at-idle-card',
   'headless-output-cannot-be-captured',
+  'phantom-armed-but-absent',
   'output-not-pinned',
   'encoder-not-pinned-nvenc',
   'phantom-not-armed',
+  'phantom-holds-a-user-workspace',
+  'phantom-touches-the-desktop',
+  'phantom-not-parked-at-login',
   'service-not-running-as-user',
   'moonlight-missing'
 ];
