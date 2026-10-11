@@ -1,0 +1,15 @@
+{
+  "name": "clarity-stream",
+  "version": "0.1.0",
+  "description": "Clarity Stream, game streaming from a Linux box that actually works, including on NVIDIA",
+  "main": "apps/host/main.js",
+  "type": "commonjs",
+  "bin": { "clarity-stream": "bin/clarity-stream" },
+  "scripts": {
+    "doctor": "node bin/clarity-stream doctor",
+    "probe": "node bin/clarity-stream probe",
+    "test": "node --test test/"
+  },
+  "license": "MIT",
+  "private": true
+}

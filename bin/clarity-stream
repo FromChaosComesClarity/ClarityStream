@@ -1,0 +1,234 @@
+#!/usr/bin/env node
+'use strict';
+// Headless entry point. The whole engine is usable without the Electron UI,
+// which is deliberate: a host doctor you cannot run over SSH is no use on a
+// machine that is showing a black screen.
+
+const { probe } = require('../packages/core/probe');
+const { diagnose } = require('../packages/core/diagnose');
+const { buildEdid } = require('../packages/core/edid');
+const { planAddParams, detect: detectBootloader } = require('../packages/core/bootloader');
+const { planArm, candidates, verifyArmed, restoreMonitorsCommands } = require('../packages/core/phantom');
+const verify = require('../packages/core/verify');
+
+const C = process.stdout.isTTY
+  ? { r: '\x1b[31m', y: '\x1b[33m', g: '\x1b[32m', d: '\x1b[2m', b: '\x1b[1m', x: '\x1b[0m' }
+  : { r: '', y: '', g: '', d: '', b: '', x: '' };
+
+const MARK = { blocker: `${C.r}x${C.x}`, degraded: `${C.y}!${C.x}`, info: `${C.d}i${C.x}` };
+
+function doctor(json) {
+  const facts = probe();
+  const result = diagnose(facts);
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ facts, result }, null, 2)}\n`);
+    return result.streamable ? 0 : 1;
+  }
+
+  const card = facts.gpus.find((g) => g.connectedCount > 0);
+  console.log(`${C.b}Clarity Stream — host doctor${C.x}`);
+  console.log(`${C.d}${facts.host}, kernel ${facts.kernel}${C.x}\n`);
+
+  console.log(`${C.b}What was measured${C.x}`);
+  for (const g of facts.gpus) {
+    const lit = g.connectedCount
+      ? g.connectors.filter((c) => c.status === 'connected').map((c) => c.name).join(', ')
+      : 'nothing connected';
+    console.log(`  ${g.card}  ${String(g.driver).padEnd(8)} ${g.pciId}  render ${g.renderNode ?? '?'}  -> ${lit}`);
+  }
+  console.log(`  compositor  ${facts.compositor.desktop} ${facts.compositor.hyprVersion ?? ''} on ${facts.compositor.sessionType}`);
+  for (const m of facts.compositor.monitors ?? []) {
+    console.log(`              ${m.name}  ${m.width}x${m.height}@${Math.round(m.refresh)}  scale ${m.scale}`);
+  }
+  console.log(`  sunshine    ${facts.sunshine.installed ? `${facts.sunshine.packageVersion ?? 'installed'} at ${facts.sunshine.realBin}` : 'not installed'}`);
+  if (facts.sunshine.installed) {
+    console.log(`              capabilities: ${facts.sunshine.capabilities ?? 'none'}`);
+    console.log(`              service: enabled=${facts.sunshine.unitEnabled} active=${facts.sunshine.unitActive}`);
+  }
+  console.log(`  moonlight   ${facts.moonlight.installed ? facts.moonlight.packageVersion : 'not installed'}`);
+  console.log(`  capture target  ${card ? `${card.card} / ${card.renderNode}` : 'no card drives a display'}`);
+  console.log('');
+
+  console.log(`${C.b}Findings${C.x}`);
+  if (!result.findings.length) console.log(`  ${C.g}nothing to report${C.x}`);
+  for (const f of result.findings) {
+    console.log(`  ${MARK[f.severity]} ${C.b}${f.title}${C.x}  ${C.d}[${f.id}]${C.x}`);
+    console.log(`      ${f.evidence}`);
+    if (f.detail) console.log(`      ${C.d}${f.detail}${C.x}`);
+    if (f.fix && f.fix.kind !== 'none') {
+      console.log(`      ${C.d}fix: ${describeFix(f.fix)}${C.x}`);
+    }
+  }
+  console.log('');
+  console.log(result.streamable ? `${C.g}${result.summary}${C.x}` : `${C.r}${result.summary}${C.x}`);
+  return result.streamable ? 0 : 1;
+}
+
+function describeFix(fix) {
+  switch (fix.kind) {
+    case 'install-package': return `install ${fix.packages.join(' ')}`;
+    case 'sunshine-conf': return Object.entries(fix.changes).map(([k, v]) => `${k} = ${v}`).join(', ');
+    case 'setcap': return `setcap ${fix.caps} ${fix.path}`;
+    case 'user-service': return `systemctl --user enable --now ${fix.unit}`;
+    case 'choose-output': return `pin output_name to one of ${fix.candidates.join(', ')}`;
+    case 'arm-phantom': return `force a connector on ${fix.card}: ${fix.candidates.join(' or ')}`;
+    case 'modprobe-conf': return `write "${fix.line}" to ${fix.path}`;
+    case 'use-phantom-instead': return 'target a forced connector rather than a headless output';
+    default: return fix.kind;
+  }
+}
+
+function edidCmd(args) {
+  const [spec, out] = args;
+  const m = /^(\d+)x(\d+)(?:@(\d+(?:\.\d+)?))?$/.exec(spec ?? '');
+  if (!m) {
+    console.error('usage: clarity-stream edid <WxH[@Hz]> [outfile]');
+    return 2;
+  }
+  const { bytes, timing } = buildEdid({
+    width: Number(m[1]), height: Number(m[2]), refresh: m[3] ? Number(m[3]) : 60
+  });
+  if (out) {
+    require('node:fs').writeFileSync(out, bytes);
+    console.log(`${bytes.length} bytes -> ${out}`);
+  } else {
+    process.stdout.write(bytes);
+    return 0;
+  }
+  console.log(`${timing.hActive}x${timing.vActive} @ ${timing.actualRefreshHz.toFixed(3)} Hz, ` +
+              `pixel clock ${timing.pixelClockMHz} MHz (CVT reduced blanking)`);
+  return 0;
+}
+
+function bootCmd() {
+  const bl = detectBootloader();
+  console.log(`bootloader: ${bl.kind ?? 'unrecognised'}`);
+  if (bl.dropinPath) console.log(`drop-in:    ${bl.dropinPath}`);
+  if (bl.regenerate) console.log(`regenerate: ${bl.regenerate.join(' ')}`);
+  if (bl.usesUki !== undefined) console.log(`uki:        ${bl.usesUki}`);
+  const plan = planAddParams(['drm.edid_firmware=DP-3:edid/clarity-stream-DP-3.bin', 'video=DP-3:e']);
+  console.log(`\nplan ok: ${plan.ok}${plan.alreadyActive ? ' (already active)' : ''}`);
+  for (const s of plan.steps ?? []) {
+    console.log(s.kind === 'run' ? `  run       ${s.argv.join(' ')}` : `  ${s.kind} ${s.path}`);
+  }
+  return 0;
+}
+
+function verifyCmd(rest) {
+  const facts = probe();
+  const card = facts.gpus.find((g) => g.connectedCount > 0);
+  const output = rest.find((a) => !a.startsWith('-')) ??
+    (facts.compositor.monitors ?? []).find((m) => m.focused)?.name;
+
+  console.log(`${C.b}Clarity Stream — capture verification${C.x}\n`);
+
+  const g = verify.verifyDesktopIsDrawing(output);
+  if (!g.ok) {
+    console.log(`  ${C.y}compositor readback  could not run: ${g.reason}${C.x}`);
+  } else {
+    const colour = g.verdict === 'live' ? C.g : C.r;
+    console.log(`  compositor readback  ${colour}${g.verdict}${C.x}  ${C.d}(${output}: mean ${g.mean}, peak ${g.max}, stddev ${g.stddev})${C.x}`);
+    console.log(`  ${C.d}grim via wlr-screencopy. Proves the desktop is drawing, nothing more.${C.x}`);
+  }
+
+  console.log('');
+  if (!card) {
+    console.log(`  ${C.r}No GPU drives a display, so there is nothing to capture.${C.x}`);
+    return 1;
+  }
+
+  // The measurement that actually settles it needs CAP_SYS_ADMIN, the same
+  // privilege Sunshine needs, so we show the command rather than escalate.
+  const out = '/tmp/clarity-stream-kms-check.png';
+  const cmdline = verify.kmsgrabCommand(card.devNode, out);
+  console.log(`  ${C.b}DRM scanout readback${C.x}  ${C.d}needs CAP_SYS_ADMIN, same as Sunshine${C.x}`);
+  console.log(`      sudo ${cmdline.join(' ')}`);
+  console.log(`      then: node bin/clarity-stream measure ${out}`);
+  console.log(`  ${C.d}This is the path 'capture = kms' uses. A live frame here is the only${C.x}`);
+  console.log(`  ${C.d}real evidence that the stream will not be black.${C.x}`);
+  return 0;
+}
+
+function measureCmd(rest) {
+  const file = rest[0];
+  if (!file) { console.error('usage: clarity-stream measure <image>'); return 2; }
+  const m = verify.measureImage(file);
+  if (!m.ok) { console.error(m.reason); return 1; }
+  const colour = m.verdict === 'live' ? C.g : C.r;
+  console.log(`${file}: ${colour}${m.verdict}${C.x}  mean ${m.mean}  peak ${m.max}  min ${m.min}  stddev ${m.stddev}`);
+  if (m.isBlack) {
+    console.log(`${C.r}Nothing in this frame is brighter than ${verify.BLACK_CEILING}/255. This is a black capture.${C.x}`);
+  }
+  return m.isBlack ? 1 : 0;
+}
+
+function phantomCmd(rest) {
+  const facts = probe();
+  const spec = rest.find((a) => /^\d+x\d+(@\d+)?$/.test(a));
+  const connector = rest.find((a) => /^(DP|HDMI)[-A-Z0-9]*$/i.test(a));
+  const { card, ranked } = candidates(facts);
+
+  console.log(`${C.b}Clarity Stream — phantom display${C.x}\n`);
+  if (!card) { console.log(`${C.r}No GPU drives a display.${C.x}`); return 1; }
+  console.log(`  display GPU        ${card.card} (${card.driver})`);
+  console.log(`  spare connectors   ${ranked.join(', ') || 'none'}`);
+  const armed = ranked.length ? verifyArmed(connector ?? ranked[0]) : null;
+  if (armed) console.log(`  currently armed    ${armed.armed ? C.g + 'yes' + C.x : 'no'}  ${C.d}${armed.reason ?? ''}${C.x}`);
+  console.log('');
+
+  if (!spec) {
+    console.log(`${C.d}Pass a resolution to see the plan, e.g. clarity-stream phantom 1920x1080@60${C.x}`);
+    return 0;
+  }
+  const m = /^(\d+)x(\d+)(?:@(\d+))?$/.exec(spec);
+  const plan = planArm(facts, {
+    connector, width: Number(m[1]), height: Number(m[2]), refresh: m[3] ? Number(m[3]) : 60
+  });
+  if (!plan.ok) { console.log(`${C.r}${plan.reason}${C.x}`); return 1; }
+
+  console.log(`${C.b}Plan: force ${plan.connector} on ${plan.card} as ${m[1]}x${m[2]}@${m[3] ?? 60}${C.x}`);
+  console.log(`  timing   ${plan.timing.hActive}x${plan.timing.vActive} @ ${plan.timing.actualRefreshHz.toFixed(3)} Hz, ` +
+              `${plan.timing.pixelClockMHz} MHz pixel clock (CVT reduced blanking)`);
+  console.log(`  bootloader ${plan.bootloader?.kind ?? 'unknown'}${plan.bootloader?.usesUki ? ' (UKI)' : ''}`);
+  console.log(`  kernel params  ${plan.kernelParams.join(' ')}`);
+  console.log('');
+  console.log(`${C.b}Steps${C.x}`);
+  for (const s of plan.steps) {
+    if (s.kind === 'run') console.log(`  run          ${s.argv.join(' ')}`);
+    else if (s.kind === 'write-file') console.log(`  write        ${s.path}${s.binary ? ` (${s.contents.length} bytes)` : ''}`);
+    else console.log(`  ${s.kind}  ${s.path}`);
+  }
+  console.log('');
+  console.log(`${C.y}A reboot is required: NVIDIA does not hot-reload a firmware EDID.${C.x}`);
+  if (plan.monitorStateAtRisk) {
+    console.log(`${C.y}Adding an output makes Hyprland re-apply monitors.lua, discarding runtime${C.x}`);
+    console.log(`${C.y}monitor state. These restore the current state afterwards:${C.x}`);
+    for (const c of restoreMonitorsCommands(plan.monitorSnapshot)) {
+      console.log(`  ${c[0]} ${c[1]} '${c[2]}'`);
+    }
+  }
+  return 0;
+}
+
+const [cmd, ...rest] = process.argv.slice(2);
+let code = 0;
+switch (cmd) {
+  case 'doctor': code = doctor(rest.includes('--json')); break;
+  case 'probe': console.log(JSON.stringify(probe(), null, 2)); break;
+  case 'edid': code = edidCmd(rest); break;
+  case 'boot': code = bootCmd(); break;
+  case 'verify': code = verifyCmd(rest); break;
+  case 'measure': code = measureCmd(rest); break;
+  case 'phantom': code = phantomCmd(rest); break;
+  default:
+    console.log('clarity-stream <command>\n');
+    console.log('  doctor [--json]      probe this host and report what would stop a stream');
+    console.log('  probe                dump measured facts as JSON');
+    console.log('  edid <WxH[@Hz]> [f]  build a phantom display EDID');
+    console.log('  verify [output]      measure real pixels, prove the capture is not black');
+  console.log('  measure <image>      report whether a captured frame is black');
+  console.log('  phantom [WxH[@Hz]]   plan the phantom stream display');
+  console.log('  boot                 show how a kernel parameter would be added here');
+    code = cmd ? 2 : 0;
+}
+process.exit(code);
