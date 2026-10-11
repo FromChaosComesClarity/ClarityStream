@@ -149,3 +149,101 @@ And one design decision it forced: CVT rounds the width down to a multiple of
 8, which turns a client asking for 1366x768 into 1360x768 and a silently
 scaled stream. EDID itself has no such constraint, so the generator keeps
 CVT's blanking figures and holds the exact requested width.
+
+---
+
+# Part two: Sunshine installed, and a stream proved end to end
+
+Added 2026-10-11, after installing `omarchy/sunshine 2026.516.143833-4.1` on
+the same machine.
+
+## What the doctor found on a live install
+
+Three blockers, two degradations. The capability check correctly stayed
+silent: the Omarchy package already ships
+`cap_sys_admin,cap_sys_nice=p` on `/usr/bin/sunshine`, so that fault was
+absent and was reported as absent.
+
+## Corrections the live install forced
+
+**The user unit is not called `sunshine.service`.** The LizardByte package
+names it `app-dev.lizardbyte.app.Sunshine.service` and declares
+`Alias=sunshine.service`, but a systemd alias only exists once the unit is
+enabled. Asking about `sunshine.service` on a fresh install answers
+`not-found`, and a fix that named it would have failed. The probe now
+discovers the unit instead of assuming its name.
+
+**`output_name` is an index, not a connector name.** Every guide says to put
+something like `DP-2` there. For the KMS backend that matches nothing, raises
+no error, and leaves Sunshine streaming whatever it enumerated first. Measured
+by setting it and reading Sunshine's own debug log:
+
+```
+output_name = 0  ->  crtc_id(200), connector 826, crtc(1440, 900)   DP-1
+output_name = 1  ->  crtc_id(392), connector 830, crtc(3440, 1440)  DP-2
+```
+
+Unpinned, it chose DP-1: the 1440x900 Dell, not the ultrawide. Sunshine's own
+"KMS monitor list" prints empty on this host, which is why its web UI cannot
+offer a display picker for KMS capture.
+
+The order is derivable without parsing logs. sysfs exposes `connector_id` per
+connector (DP-1 = 826, DP-2 = 830), and sorting connected connectors by it
+reproduces Sunshine's index order exactly.
+
+**Restarting Sunshine a few times trips its own start limit.** The packaged
+unit sets `StartLimitBurst=5` over `StartLimitIntervalSec=500`. Tuning capture
+settings means several restarts, after which systemd refuses to start it and
+the unit sits `failed` for reasons unrelated to configuration. Clearing the
+failure is now part of starting it.
+
+**NVENC runs without CUDA in this package.** Sunshine says so at startup:
+`Attempting to use NVENC without CUDA support. Reverting back to GPU -> RAM -> GPU`.
+`ldd /usr/bin/sunshine` links no CUDA library, so every captured frame is
+copied out to system memory and back rather than staying in VRAM. It streams;
+it costs latency. No setting fixes it, and the catalogue says so rather than
+offering one that will not help.
+
+## The stream, measured
+
+After `capture = kms`, `adapter_name = /dev/dri/renderD128`, `encoder = nvenc`
+and `output_name = 1`, Sunshine logged `Screencasting with KMS` and
+`Found connector ID [830]`.
+
+Moonlight was paired locally and told to stream the Desktop app. Three
+readings, and the first two are the interesting ones.
+
+**Reading 1, a false positive.** Captured four seconds after the client window
+appeared: mean 49.24, peak 104, stddev 3.32, reported **live**. Looking at the
+frame showed Moonlight's own `Starting Desktop...` placeholder. No video had
+arrived at all. A single non-black frame is not evidence of a stream, and the
+verifier was changed: it now takes two frames, requires them to differ, and
+treats a frame with stddev below 8 as low-detail rather than live.
+
+**Reading 2, a real black stream, for a reason that is not a fault.** Streaming
+DP-2 with the client full-screen on DP-2: mean 0.97, peak 1, and two
+byte-identical frames. That is the capture feeding back into itself through
+the client window. The loop locks onto what it started with, and it starts
+before the first decoded frame, so it locks onto black. It looks exactly like
+the NVIDIA bug this project exists to fix, and it is not one.
+
+**Reading 3, the proof.** Streaming DP-1 with the client on DP-2, so there is
+no loop: mean 20.48, peak 108, **stddev 32.7**, and the frame shows the Dell's
+actual content, rotated, with the Omarchy bar along its edge. HEVC frames
+decoding client-side (`Decoded frame with POC 0/0`).
+
+**KMS capture works on this machine.** It is the first time it has streamed
+anything but black.
+
+What is not yet proved: DP-2 specifically, end to end, because every local test
+of it is confounded by the loopback. That is a property of testing a host from
+itself, and disappears the moment a real client connects from another machine.
+
+## A bug in the verifier itself
+
+The frame measurement read ffmpeg's raw output as UTF-8, which silently
+replaces every byte above 127. A mid-grey test frame measured 253 instead of
+128, and a detailed frame returned 3977 of its 4096 samples. Dark frames were
+unaffected, which is why the conclusions above still stand, but anything bright
+was being measured wrongly. Raw frames are now read as bytes, and a test
+asserts that mid grey reads as mid grey.

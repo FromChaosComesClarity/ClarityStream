@@ -23,11 +23,17 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { tryExec, which } = require('./run');
+const { tryExec, tryExecBinary, which } = require('./run');
 
 // Anything at or below this, across the whole frame, counts as black. 8-bit
 // video black is 16 for studio range, so the bar sits just above it.
 const BLACK_CEILING = 18;
+
+// Below this spread, a frame carries almost no detail. A real desktop sits
+// far above it; a loading screen or a solid fill sits below. Measured on this
+// machine: Moonlight's "Starting Desktop..." placeholder gave stddev 3.32,
+// a genuine streamed desktop gave 32.7.
+const DETAIL_FLOOR = 8;
 
 function tmpFile(ext) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clarity-stream-'));
@@ -41,7 +47,9 @@ function measureImage(imagePath, { grid = 64 } = {}) {
   if (!fs.existsSync(imagePath)) {
     return { ok: false, reason: `No frame at ${imagePath}` };
   }
-  const r = tryExec('ffmpeg', [
+  // Raw pixels, read as bytes. Reading them as text loses every sample above
+  // 127, which is most of a bright frame.
+  const r = tryExecBinary('ffmpeg', [
     '-hide_banner', '-loglevel', 'error',
     '-i', imagePath,
     '-vf', `format=gray,scale=${grid}:${grid}:flags=area`,
@@ -50,7 +58,7 @@ function measureImage(imagePath, { grid = 64 } = {}) {
 
   if (!r.ok) return { ok: false, reason: `ffmpeg could not decode the frame: ${r.stderr?.trim()}` };
 
-  const buf = Buffer.from(r.stdout, 'binary');
+  const buf = r.stdout;
   if (buf.length < grid * grid) {
     return { ok: false, reason: `Expected ${grid * grid} samples, got ${buf.length}.` };
   }
@@ -67,19 +75,61 @@ function measureImage(imagePath, { grid = 64 } = {}) {
   for (let i = 0; i < grid * grid; i++) variance += (buf[i] - mean) ** 2;
   const stddev = Math.sqrt(variance / (grid * grid));
 
+  // A cheap content signature, so two frames can be compared without keeping
+  // the pixels around. Identical signatures mean nothing moved.
+  let signature = 0;
+  for (let i = 0; i < grid * grid; i++) {
+    signature = ((signature * 31) + buf[i]) >>> 0;
+  }
+
+  const isBlack = max <= BLACK_CEILING;
+  const lowDetail = stddev < DETAIL_FLOOR;
+
   return {
     ok: true,
     mean: Number(mean.toFixed(2)),
     max, min,
     stddev: Number(stddev.toFixed(2)),
-    // Black means nothing anywhere is bright. A dark but live desktop still
-    // has a bright cursor, a panel, a window edge, so max carries the verdict
-    // and stddev catches a uniform grey that is also not a real picture.
-    isBlack: max <= BLACK_CEILING,
-    isFlat: stddev < 1.0,
-    verdict: max <= BLACK_CEILING
-      ? 'black'
-      : (stddev < 1.0 ? 'flat' : 'live')
+    signature,
+    isBlack,
+    // Not black, but carrying so little detail that it is more likely a fill
+    // or a client-side loading screen than a desktop. This is deliberately
+    // not called "live": a single non-black frame is not proof of a stream.
+    lowDetail: !isBlack && lowDetail,
+    verdict: isBlack ? 'black' : (lowDetail ? 'low-detail' : 'detailed')
+  };
+}
+
+// One frame cannot tell a stream from a still. Two frames, a moment apart,
+// can: a real session moves, even if only the clock or the cursor.
+//
+// This exists because a single-frame check was fooled here. Moonlight's own
+// "Starting Desktop..." placeholder measured peak 104 and was reported live,
+// while no video had arrived at all.
+function compareFrames(a, b) {
+  if (!a?.ok || !b?.ok) {
+    return { ok: false, reason: 'Need two readable frames to compare.' };
+  }
+  const identical = a.signature === b.signature;
+  if (a.isBlack && b.isBlack) {
+    return { ok: true, verdict: 'black', text: 'Both frames are black. Nothing is being captured.' };
+  }
+  if (identical) {
+    return {
+      ok: true,
+      verdict: 'static',
+      text: a.lowDetail
+        ? 'Both frames are identical and nearly featureless, which looks like a placeholder or a loading screen rather than a stream.'
+        : 'Both frames are identical. Something is on screen but nothing is updating.'
+    };
+  }
+  if (a.lowDetail && b.lowDetail) {
+    return { ok: true, verdict: 'low-detail', text: 'The picture is changing but carries almost no detail. Likely a loading screen.' };
+  }
+  return {
+    ok: true,
+    verdict: 'live',
+    text: `Live picture, changing between frames (stddev ${a.stddev} and ${b.stddev}).`
   };
 }
 
@@ -187,7 +237,28 @@ function explain({ grim, kms }) {
   };
 }
 
+// Streaming the same display the client window is sitting on makes the
+// capture include the client, which is showing the capture. The loop locks
+// onto whatever it started with, and since it starts before the first decoded
+// frame, it locks onto black. Measured here: streaming DP-2 with the client
+// full-screen on DP-2 gave mean 0.97 and two byte-identical frames, while the
+// same host streaming DP-1 gave a real picture at stddev 32.7.
+//
+// It looks exactly like a broken capture and it is not one, so it is worth
+// ruling out before anyone goes chasing drivers.
+function loopbackWarning({ streamedConnector, clientOnConnector }) {
+  if (!streamedConnector || !clientOnConnector) return null;
+  if (streamedConnector !== clientOnConnector) return null;
+  return {
+    risk: 'loopback',
+    text: `The client window is on ${clientOnConnector}, which is the display being streamed. ` +
+          'That feeds the capture back into itself and reads as a black stream. ' +
+          'Move the client to another display, or stream a different one, before trusting this result.'
+  };
+}
+
 module.exports = {
   measureImage, captureGrim, kmsgrabCommand, verifyDesktopIsDrawing, explain,
-  interpretKmsgrabFailure, BLACK_CEILING
+  interpretKmsgrabFailure, compareFrames, loopbackWarning,
+  BLACK_CEILING, DETAIL_FLOOR
 };

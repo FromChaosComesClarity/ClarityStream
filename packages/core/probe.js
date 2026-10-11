@@ -161,20 +161,36 @@ function probeSunshine() {
   const pkg = tryExec('pacman', ['-Q', 'sunshine']);
   const caps = realBin ? tryExec('getcap', [realBin]) : null;
 
-  let confDir = null, confPath = null, appsPath = null;
-  for (const d of SUNSHINE_CONF_DIRS) {
-    if (fs.existsSync(path.join(d, 'sunshine.conf'))) { confDir = d; break; }
-    if (!confDir && fs.existsSync(d)) confDir = d;
+  // Whether this build can hand a captured frame straight to NVENC, or has to
+  // copy it out to system memory and back. Matched on the library soname, not
+  // on the substring "cuda": libicudata.so contains it and is unrelated.
+  let cudaLinked = null;
+  if (realBin) {
+    const ldd = tryExec('ldd', [realBin]);
+    if (ldd.ok) {
+      cudaLinked = /\blibcuda\.so|\blibnvcuvid\.so|\blibnvidia-encode\.so/.test(ldd.stdout);
+    }
   }
-  if (confDir) {
-    confPath = path.join(confDir, 'sunshine.conf');
-    appsPath = path.join(confDir, 'apps.json');
-  }
+
+  // Prefer a config that already exists; otherwise name where one belongs.
+  // Sunshine writes its own on first run, and we may need to write ours
+  // before it ever starts, so this is never null.
+  let confDir = SUNSHINE_CONF_DIRS.find((d) => fs.existsSync(path.join(d, 'sunshine.conf')))
+    ?? SUNSHINE_CONF_DIRS[0];
+  const confPath = path.join(confDir, 'sunshine.conf');
+  const appsPath = path.join(confDir, 'apps.json');
 
   // Unit state for the user service, which is how sunshine is meant to run
   // on a Wayland session: a system unit has no seat and cannot capture.
-  const unit = tryExec('systemctl', ['--user', 'is-enabled', 'sunshine.service']);
-  const active = tryExec('systemctl', ['--user', 'is-active', 'sunshine.service']);
+  //
+  // The unit name is discovered, never assumed. The LizardByte package calls
+  // it app-dev.lizardbyte.app.Sunshine.service and declares
+  // `Alias=sunshine.service`, but an alias is only created when the unit is
+  // enabled. So asking about sunshine.service on a fresh install answers
+  // "not-found" and a fix that names it would fail.
+  const unitName = discoverSunshineUnit();
+  const unit = unitName ? tryExec('systemctl', ['--user', 'is-enabled', unitName]) : { ok: false, stdout: '' };
+  const active = unitName ? tryExec('systemctl', ['--user', 'is-active', unitName]) : { ok: false, stdout: '' };
 
   return {
     installed: Boolean(bin),
@@ -187,9 +203,24 @@ function probeSunshine() {
     confDir, confPath, appsPath,
     confExists: Boolean(confPath && fs.existsSync(confPath)),
     confRaw: confPath ? readText(confPath) : null,
+    unitName,
+    unitFound: Boolean(unitName),
+    cudaLinked,
     unitEnabled: unit.ok ? unit.stdout.trim() : (unit.stdout || '').trim() || 'unknown',
     unitActive: active.ok ? active.stdout.trim() : (active.stdout || '').trim() || 'unknown'
   };
+}
+
+// Finds whatever the installed package actually called its user unit.
+function discoverSunshineUnit() {
+  const r = tryExec('systemctl', ['--user', 'list-unit-files', '--all', '--no-legend', '--no-pager']);
+  if (!r.ok) return null;
+  const names = r.stdout.split('\n')
+    .map((l) => l.trim().split(/\s+/)[0])
+    .filter((n) => n && n.endsWith('.service') && /sunshine/i.test(n));
+  if (!names.length) return null;
+  // Prefer the real unit over its alias, so enable/disable act on the file.
+  return names.find((n) => !/^sunshine\.service$/i.test(n)) ?? names[0];
 }
 
 function probeMoonlight() {

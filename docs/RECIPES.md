@@ -28,9 +28,10 @@ The two rules are Clarity's two rules:
 | `headless-output-cannot-be-captured` | blocker | `output_name` points at a `HEADLESS-*` output, which has no CRTC for KMS to read. |
 | `nvidia-modeset-disabled` | blocker | No DRM modesetting, so there is no scanout buffer at all. |
 | `service-not-running-as-user` | blocker | Sunshine not active as a user unit. A system unit has no seat and no Wayland socket. |
-| `output-not-pinned` | degraded | Several outputs active and `output_name` unset, so which display streams is a coin toss. |
+| `output-not-pinned` | degraded | Sunshine is streaming a display you did not choose. `output_name` is an index for KMS capture, not a connector name, so the obvious value does nothing. |
 | `encoder-not-pinned-nvenc` | degraded | NVENC present but `encoder` unset, so encoding may land on the CPU. |
 | `phantom-not-armed` | info | No phantom display, so streaming has to use a real monitor at its real resolution. |
+| `nvenc-without-cuda` | degraded | The Sunshine build links no CUDA, so frames go GPU to RAM to GPU instead of staying in VRAM. No setting fixes it. |
 | `moonlight-missing` | info | Only matters if this machine is also a client. |
 
 ## Order is part of the fix

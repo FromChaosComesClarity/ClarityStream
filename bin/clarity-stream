@@ -10,6 +10,7 @@ const { buildEdid } = require('../packages/core/edid');
 const { planAddParams, detect: detectBootloader } = require('../packages/core/bootloader');
 const { planArm, candidates, verifyArmed, restoreMonitorsCommands } = require('../packages/core/phantom');
 const verify = require('../packages/core/verify');
+const { applyAll, needsRestart, restartUserService, isPrivileged } = require('../packages/core/apply');
 
 const C = process.stdout.isTTY
   ? { r: '\x1b[31m', y: '\x1b[33m', g: '\x1b[32m', d: '\x1b[2m', b: '\x1b[1m', x: '\x1b[0m' }
@@ -114,6 +115,68 @@ function bootCmd() {
   return 0;
 }
 
+function fixCmd(rest) {
+  const doIt = rest.includes('--apply');
+  const outputIdx = rest.indexOf('--output');
+  const outputName = outputIdx !== -1 ? rest[outputIdx + 1] : undefined;
+  const noService = rest.includes('--no-service');
+
+  const facts = probe();
+  const result = diagnose(facts);
+
+  console.log(`${C.b}Clarity Stream — ${doIt ? 'applying fixes' : 'what would change (dry run)'}${C.x}\n`);
+  if (!result.findings.length) {
+    console.log(`${C.g}Nothing to fix.${C.x}`);
+    return 0;
+  }
+
+  let out;
+  try {
+    out = applyAll(facts, result, { outputName, dryRun: !doIt, startService: !noService });
+  } catch (err) {
+    console.error(`${C.r}${err.message}${C.x}`);
+    return 2;
+  }
+
+  for (const d of out.done) {
+    if (d.kind === 'sunshine-conf') {
+      console.log(`${C.b}${facts.sunshine.confPath}${C.x}${d.created ? `  ${C.d}(created)${C.x}` : ''}`);
+      for (const a of d.applied) {
+        const mark = a.action === 'unchanged' ? C.d + '=' + C.x : C.g + (a.action === 'added' ? '+' : '~') + C.x;
+        const from = a.from === null ? '' : ` ${C.d}(was ${a.from})${C.x}`;
+        console.log(`  ${mark} ${a.key} = ${a.to}${from}`);
+      }
+    } else if (d.kind === 'user-service') {
+      const ok = d.dryRun ? `${C.d}would enable and start${C.x}` : (d.ok ? `${C.g}${d.detail}${C.x}` : `${C.r}${d.detail}${C.x}`);
+      console.log(`${C.b}${d.unit}${C.x}  ${ok}`);
+    }
+  }
+
+  if (out.deferred.length) {
+    console.log(`\n${C.y}Needs root, so not done here:${C.x}`);
+    for (const d of out.deferred) {
+      console.log(`  ${d.title}  ${C.d}[${d.id}]${C.x}`);
+      console.log(`      ${describeFix(d.fix)}`);
+    }
+  }
+
+  if (!doIt) {
+    console.log(`\n${C.d}Nothing was changed. Re-run with --apply.${C.x}`);
+    return 0;
+  }
+
+  // A config Sunshine has not re-read is a config that has not taken effect.
+  if (needsRestart(out) && facts.sunshine.unitFound) {
+    const already = out.done.some((d) => d.kind === 'user-service' && d.ok);
+    if (!already) {
+      const r = restartUserService(facts.sunshine.unitName);
+      console.log(`\n${facts.sunshine.unitName}  ${r.ok ? C.g + 'restarted so the new config is read' + C.x : C.r + r.detail + C.x}`);
+    }
+  }
+  console.log(`\n${C.d}Now prove it: clarity-stream verify${C.x}`);
+  return 0;
+}
+
 function verifyCmd(rest) {
   const facts = probe();
   const card = facts.gpus.find((g) => g.connectedCount > 0);
@@ -122,13 +185,34 @@ function verifyCmd(rest) {
 
   console.log(`${C.b}Clarity Stream — capture verification${C.x}\n`);
 
+  // Two readings, a moment apart. One frame cannot tell a stream from a
+  // still, and a still is exactly what a loading screen looks like.
   const g = verify.verifyDesktopIsDrawing(output);
+  const g2 = verify.verifyDesktopIsDrawing(output);
   if (!g.ok) {
     console.log(`  ${C.y}compositor readback  could not run: ${g.reason}${C.x}`);
   } else {
-    const colour = g.verdict === 'live' ? C.g : C.r;
-    console.log(`  compositor readback  ${colour}${g.verdict}${C.x}  ${C.d}(${output}: mean ${g.mean}, peak ${g.max}, stddev ${g.stddev})${C.x}`);
+    const cmp = verify.compareFrames(g, g2);
+    const colour = cmp.verdict === 'live' ? C.g : (cmp.verdict === 'black' ? C.r : C.y);
+    console.log(`  compositor readback  ${colour}${cmp.verdict}${C.x}  ${C.d}(${output}: mean ${g.mean}, peak ${g.max}, stddev ${g.stddev})${C.x}`);
+    console.log(`  ${C.d}${cmp.text}${C.x}`);
     console.log(`  ${C.d}grim via wlr-screencopy. Proves the desktop is drawing, nothing more.${C.x}`);
+  }
+
+  // The trap that makes a working host look broken.
+  const streamed = (() => {
+    const { enumerateOutputs } = require('../packages/core/outputs');
+    const idx = facts.sunshine.confRaw?.match(/^\s*output_name\s*=\s*(\d+)/m)?.[1];
+    if (idx === undefined) return null;
+    return enumerateOutputs(facts).find((o) => String(o.index) === idx)?.connector ?? null;
+  })();
+  if (streamed) {
+    console.log(`\n  ${C.b}streaming${C.x}  ${streamed}`);
+    const warn = verify.loopbackWarning({ streamedConnector: streamed, clientOnConnector: streamed });
+    if (warn) {
+      console.log(`  ${C.y}If you test with a client on ${streamed} itself, expect black:${C.x}`);
+      console.log(`  ${C.d}${warn.text}${C.x}`);
+    }
   }
 
   console.log('');
@@ -217,6 +301,7 @@ switch (cmd) {
   case 'probe': console.log(JSON.stringify(probe(), null, 2)); break;
   case 'edid': code = edidCmd(rest); break;
   case 'boot': code = bootCmd(); break;
+  case 'fix': code = fixCmd(rest); break;
   case 'verify': code = verifyCmd(rest); break;
   case 'measure': code = measureCmd(rest); break;
   case 'phantom': code = phantomCmd(rest); break;
@@ -225,7 +310,9 @@ switch (cmd) {
     console.log('  doctor [--json]      probe this host and report what would stop a stream');
     console.log('  probe                dump measured facts as JSON');
     console.log('  edid <WxH[@Hz]> [f]  build a phantom display EDID');
-    console.log('  verify [output]      measure real pixels, prove the capture is not black');
+    console.log('  fix [--apply]        apply what can be fixed without root');
+  console.log('                       [--output NAME] [--no-service]');
+  console.log('  verify [output]      measure real pixels, prove the capture is not black');
   console.log('  measure <image>      report whether a captured frame is black');
   console.log('  phantom [WxH[@Hz]]   plan the phantom stream display');
   console.log('  boot                 show how a kernel parameter would be added here');

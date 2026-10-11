@@ -75,8 +75,19 @@ it, then tells you what the measurement means:
 | live | black | capture is aimed at the wrong GPU or a dead connector |
 | black | black | nothing is being drawn; the output is asleep or blanked |
 
-A config file that says `capture = kms` is not evidence. A frame with a
-measured peak luminance of 98 out of 255 is.
+It reads two frames, not one, and requires them to differ. That is not
+fussiness: a single-frame check on this machine confidently reported a stream
+as live when what it had actually captured was the client's own
+`Starting Desktop...` placeholder.
+
+It also knows the trap that makes a working host look broken. Streaming the
+display your client window is sitting on feeds the capture back into itself,
+the loop locks onto the black it started with, and you get a perfect
+impression of the NVIDIA bug. Measured here: streaming DP-2 with the client on
+DP-2 gave peak 1; the same host streaming DP-1 gave a real picture.
+
+A config file that says `capture = kms` is not evidence. A frame at stddev
+32.7 showing your actual desktop is.
 
 ## Running it
 
@@ -97,13 +108,21 @@ call after you approve it.
 
 ## Status
 
-Working: the probe, the fault catalogue, the diagnosis, lossless
-`sunshine.conf` editing, EDID generation (validated against `edid-decode`),
-the phantom display planner, bootloader and initramfs plumbing for Limine,
-GRUB and systemd-boot, and pixel measurement.
+**It works.** On the development machine, an RTX 4060 Ti on Hyprland that had
+never streamed anything but black, Clarity Stream found the faults, applied the
+fixes, and a Moonlight client decoded a real picture. The readings are in
+[docs/DIAGNOSIS.md](docs/DIAGNOSIS.md).
+
+Working: the probe, the fault catalogue, the diagnosis, the applier for
+everything that does not need root, lossless `sunshine.conf` editing, EDID
+generation (validated against `edid-decode`), the phantom display planner,
+bootloader and initramfs plumbing for Limine, GRUB and systemd-boot, and pixel
+verification.
 
 Next: the privileged helper that executes a plan, the Electron host UI, pairing
-against Sunshine's local API, the Couch Mode app entry, and the client app.
+against Sunshine's local API (the handshake is understood, it is `POST
+/api/pin` plus `moonlight pair --pin`), the Couch Mode app entry, and the
+client app.
 
 ## Licence
 

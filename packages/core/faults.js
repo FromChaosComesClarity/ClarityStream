@@ -11,6 +11,8 @@
 //      when the fact could not be read it returns 'unknown' rather than
 //      assuming the good case.
 
+const { enumerateOutputs, defaultOutput } = require('./outputs');
+
 const SEVERITY = { BLOCKER: 'blocker', DEGRADED: 'degraded', INFO: 'info' };
 
 // A card that drives at least one lit connector. Capture has to be aimed
@@ -125,17 +127,36 @@ const FAULTS = [
 
   {
     id: 'output-not-pinned',
-    title: 'Which display gets streamed is left to chance',
+    title: 'Sunshine is streaming a monitor you did not choose',
     severity: SEVERITY.DEGRADED,
+    // Unpinned, Sunshine takes the first CRTC it enumerates, which is the
+    // lowest connector id, which is very often the smallest or secondary
+    // screen. Measured here: it picked the 1440x900 Dell over the 3440x1440
+    // ultrawide. And `output_name` for KMS capture is an index, not a
+    // connector name, so the obvious value does nothing at all.
     detect: (f) => {
       if (!f.sunshine.installed) return null;
-      const monitors = f.compositor.monitors ?? [];
-      if (monitors.length < 2) return null;
-      if (sunshineKey(f, 'output_name')) return null;
+      const outs = enumerateOutputs(f);
+      if (outs.length < 2) return null;
+      const current = sunshineKey(f, 'output_name');
+      const best = defaultOutput(f);
+      if (current !== null && best && String(best.index) === current) return null;
+
+      // A connector name in output_name matches nothing in the KMS backend,
+      // which is worth calling out separately from simply being unset.
+      const nameLike = current !== null && /[A-Za-z]/.test(current);
       return {
-        evidence: `${monitors.length} outputs are active and output_name is unset.`,
-        detail: `Sunshine will pick one: ${monitors.map((m) => `${m.name} ${m.width}x${m.height}`).join(', ')}.`,
-        fix: { kind: 'choose-output', candidates: monitors.map((m) => m.name) }
+        evidence: current === null
+          ? `output_name is unset, so Sunshine streams the lowest connector id: ${outs[0].label}.`
+          : nameLike
+            ? `output_name = ${current}, but the KMS backend takes an index, not a connector name. This matches nothing and is ignored.`
+            : `output_name = ${current}, which is ${outs.find((o) => String(o.index) === current)?.label ?? 'not a valid index'}.`,
+        detail: `Available: ${outs.map((o) => `${o.index} = ${o.label}`).join('; ')}.` +
+                (best ? ` Suggested: ${best.index} (${best.label}).` : ''),
+        unknown: outs.some((o) => !o.orderKnown),
+        fix: best
+          ? { kind: 'sunshine-conf', changes: { output_name: String(best.index) } }
+          : { kind: 'none' }
       };
     }
   },
@@ -206,9 +227,15 @@ const FAULTS = [
     detect: (f) => {
       if (!f.sunshine.installed) return null;
       if (f.sunshine.unitActive === 'active') return null;
+      if (!f.sunshine.unitFound) return {
+        evidence: 'Sunshine is installed but ships no user unit this system can see.',
+        detail: 'Without a user unit it has to be started by hand inside the graphical session.',
+        unknown: true,
+        fix: { kind: 'none' }
+      };
       return {
-        evidence: `sunshine.service (user): enabled=${f.sunshine.unitEnabled}, active=${f.sunshine.unitActive}.`,
-        fix: { kind: 'user-service', unit: 'sunshine.service', enable: true }
+        evidence: `${f.sunshine.unitName}: enabled=${f.sunshine.unitEnabled}, active=${f.sunshine.unitActive}.`,
+        fix: { kind: 'user-service', unit: f.sunshine.unitName, enable: true }
       };
     }
   },
@@ -232,6 +259,36 @@ const FAULTS = [
         evidence: `No drm.edid_firmware on the kernel command line. Spare connectors on ${card.card}: ${spares.join(', ')}.`,
         detail: 'Without it, streaming has to use a real monitor at its real resolution.',
         fix: { kind: 'arm-phantom', card: card.card, candidates: spares }
+      };
+    }
+  },
+
+  {
+    id: 'nvenc-without-cuda',
+    title: 'NVENC is round-tripping every frame through system memory',
+    severity: SEVERITY.DEGRADED,
+    // Sunshine says this itself, once, at startup:
+    //   "Attempting to use NVENC without CUDA support.
+    //    Reverting back to GPU -> RAM -> GPU"
+    // The captured frame is already in VRAM and the encoder is on the same
+    // card, but without CUDA support in the build it cannot be handed over
+    // directly, so every frame is copied out to system memory and back. It
+    // still streams; it costs latency and bandwidth that the hardware should
+    // not have to spend.
+    //
+    // Measured here: `ldd /usr/bin/sunshine` links no CUDA library at all, so
+    // this is a property of the package, not of the configuration. Nothing in
+    // sunshine.conf can fix it, and saying so is more use than offering a
+    // setting that will not help.
+    detect: (f) => {
+      if (!f.sunshine.installed || !f.nvidia.present) return null;
+      if (f.sunshine.cudaLinked === null) return null;       // could not tell
+      if (f.sunshine.cudaLinked) return null;
+      return {
+        evidence: 'The installed Sunshine binary is not linked against CUDA.',
+        detail: 'Frames go GPU -> RAM -> GPU instead of staying in VRAM. ' +
+                'Streaming works; it costs latency. Fixing it needs a CUDA-enabled build.',
+        fix: { kind: 'none' }
       };
     }
   },

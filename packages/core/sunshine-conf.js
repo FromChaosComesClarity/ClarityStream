@@ -43,15 +43,49 @@ function apply(text, changes, { comment = 'Clarity Stream' } = {}) {
     } else {
       // Append, grouped under one header so a human can see who did this.
       if (!out.some((l) => l.includes(`# ${comment}`))) {
-        if (out.length && out[out.length - 1].trim() !== '') out.push('');
-        out.push(`# ${comment} — managed settings. Edit freely; they are`);
+        // Only separate from existing content, never open the file with a
+        // blank line.
+        if (out.some((l) => l.trim() !== '') && out[out.length - 1].trim() !== '') out.push('');
+        out.push(`# ${comment} managed settings. Edit freely; they are`);
         out.push('# re-checked, not blindly overwritten.');
       }
       out.push(`${key} = ${want}`);
       applied.push({ key, from: null, to: want, action: 'added' });
     }
   }
-  return { text: out.join('\n'), applied };
+  return { text: tidy(out).join('\n'), applied };
+}
+
+// Removing a key leaves the blank lines that surrounded it, and repeated
+// edits otherwise accumulate gaps. This is purely cosmetic and that is the
+// point: the user is invited to edit this file, so it should not look like
+// something was done to it carelessly.
+function tidy(lines) {
+  const out = [];
+  for (const line of lines) {
+    const blank = line.trim() === '';
+    if (blank && (out.length === 0 || out[out.length - 1].trim() === '')) continue;
+    out.push(line);
+  }
+  while (out.length && out[out.length - 1].trim() === '') out.pop();
+  return out;
+}
+
+// Deletes keys outright rather than setting them to a default, so a setting
+// Clarity Stream once managed leaves no trace once it is no longer wanted.
+// Lines we did not write are never touched.
+function remove(text, keys) {
+  const { lines, entries } = parse(text ?? '');
+  const drop = new Set();
+  const removed = [];
+  for (const key of keys) {
+    const e = entries.get(key);
+    if (!e) continue;
+    drop.add(e.lineIndex);
+    removed.push({ key, was: e.value });
+  }
+  const out = tidy(lines.filter((_, i) => !drop.has(i)));
+  return { text: out.join('\n'), removed };
 }
 
 // Writes atomically and keeps one backup, because the file being edited is
@@ -67,4 +101,4 @@ function write(confPath, text) {
   fs.renameSync(tmp, confPath);
 }
 
-module.exports = { parse, get, apply, write };
+module.exports = { parse, get, apply, remove, write, tidy };
