@@ -196,30 +196,46 @@ function restoreMonitorsCommands(snapshot) {
   });
 }
 
-// After a reboot: did the connector actually come up with our EDID? This is
-// the only honest confirmation that the phantom exists.
+// After a reboot: did the connector actually come up with our EDID?
+//
+// "Connected" alone is not proof, because a connector can report connected for
+// reasons of its own. The decisive check is comparing the EDID the kernel is
+// handing out against the file we wrote: identical bytes mean the override was
+// honoured and nothing else explains it.
 function verifyArmed(connector) {
-  const base = `/sys/class/drm`;
+  const base = '/sys/class/drm';
   const match = fs.existsSync(base)
     ? fs.readdirSync(base).find((d) => d.endsWith(`-${connector}`))
     : null;
-  if (!match) return { armed: false, reason: `No sysfs entry for connector ${connector}.` };
+  if (!match) return { armed: false, connector, reason: `No sysfs entry for connector ${connector}.` };
 
-  const status = (() => { try { return fs.readFileSync(`${base}/${match}/status`, 'utf8').trim(); } catch { return null; } })();
-  let edidLen = 0;
-  try { edidLen = fs.statSync(`${base}/${match}/edid`).size; } catch { /* stays 0 */ }
+  const read = (f) => { try { return fs.readFileSync(`${base}/${match}/${f}`); } catch { return null; } };
+  const status = read('status')?.toString().trim() ?? null;
+  const live = read('edid');
+  const modes = (read('modes')?.toString() ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
 
-  // sysfs reports EDID size as 0 for a connector with nothing attached, so a
-  // non-zero length on a connector with no cable is the signature of the
-  // override having been honoured.
+  const ours = (() => {
+    try { return fs.readFileSync(path.join(FIRMWARE_DIR, edidFileName(connector))); } catch { return null; }
+  })();
+
+  const edidLength = live ? live.length : 0;
+  // A firmware EDID may be padded or truncated to the block size by the
+  // driver, so compare the first 128 bytes, which is the whole base block.
+  const edidMatches = Boolean(live && ours && live.length >= 128 && ours.length >= 128 &&
+    live.subarray(0, 128).equals(ours.subarray(0, 128)));
+
+  const armed = status === 'connected' && edidMatches;
   return {
-    armed: status === 'connected' && edidLen > 0,
-    connector, sysfs: match, status, edidLength: edidLen,
-    reason: status !== 'connected'
-      ? `${connector} reports ${status}; the kernel did not force it on.`
-      : edidLen === 0
-        ? `${connector} is connected but exposes no EDID.`
-        : null
+    armed, connector, sysfs: match, status, edidLength, edidMatches, modes,
+    ourEdidPresent: Boolean(ours),
+    reason: armed ? null
+      : status !== 'connected'
+        ? `${connector} reports ${status}; the kernel did not force it on.`
+        : edidLength === 0
+          ? `${connector} is connected but exposes no EDID.`
+          : !ours
+            ? `${connector} is connected, but our EDID file is not on disk to compare against.`
+            : `${connector} is connected but its EDID is not the one we wrote, so something else is driving it.`
   };
 }
 

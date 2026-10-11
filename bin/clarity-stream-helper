@@ -12,7 +12,35 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { execFileSync } = require('node:child_process');
+
+// Commands here rebuild an initramfs and a boot entry. Keeping only the last
+// line of their output, which is what this did at first, throws away the part
+// that says whether the build actually succeeded: a run of `mkinitcpio -P`
+// reported "Updated: /boot/limine.conf", which is a hook's message, not
+// mkinitcpio's own. Everything goes to a log, and only a summary to the
+// terminal.
+const LOG_DIR = '/var/log/clarity-stream';
+let logFile = null;
+
+function openLog() {
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true, mode: 0o755 });
+    logFile = path.join(LOG_DIR, `helper-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
+    fs.writeFileSync(logFile, '', { mode: 0o644 });
+  } catch {
+    // Not fatal. A helper that refuses to work because it cannot log is worse
+    // than one that works and says where the log is not.
+    logFile = null;
+  }
+  return logFile;
+}
+
+function log(text) {
+  if (!logFile) return;
+  try { fs.appendFileSync(logFile, text.endsWith('\n') ? text : `${text}\n`); } catch { /* ignore */ }
+}
 
 // Files this helper may create or replace. Each is owned by Clarity Stream:
 // deleting any of them undoes what it did, and none belongs to a package.
@@ -99,7 +127,16 @@ function run(step) {
       const out = execFileSync(step.argv[0], step.argv.slice(1), {
         encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 600000
       });
-      return (out.trim().split('\n').pop() || 'ok').slice(0, 200);
+      log(`\n$ ${step.argv.join(' ')}\n${out}`);
+      const lines = out.trim().split('\n').filter((l) => l.trim());
+      // Surface anything that looks like trouble even on a zero exit status,
+      // because mkinitcpio warns and succeeds.
+      const warnings = lines.filter((l) => /\b(warning|error|failed|cannot|missing)\b/i.test(l));
+      if (warnings.length) {
+        return `ok, with ${warnings.length} warning${warnings.length === 1 ? '' : 's'}:\n` +
+               warnings.slice(0, 5).map((w) => `      ${w.trim().slice(0, 160)}`).join('\n');
+      }
+      return `ok (${lines.length} lines logged)`;
     }
     case 'setcap':
       execFileSync('setcap', [step.caps, step.path], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -158,6 +195,11 @@ if (process.getuid && process.getuid() !== 0) {
   process.exit(1);
 }
 
+const lf = openLog();
+if (lf) console.log(`  full output: ${lf}\n`);
+else console.log(`  (could not open a log in ${LOG_DIR}; output below is a summary only)\n`);
+log(`Clarity Stream helper\n${plan.description ?? ''}\n${new Date().toISOString()}\n`);
+
 let failed = false;
 for (const [i, step] of steps.entries()) {
   process.stdout.write(`  [${i + 1}/${steps.length}] ${describe(step)} ... `);
@@ -165,7 +207,9 @@ for (const [i, step] of steps.entries()) {
     console.log(run(step));
   } catch (err) {
     console.log('FAILED');
-    console.error(`      ${(err.stderr ? String(err.stderr) : err.message).trim().split('\n')[0]}`);
+    const detail = (err.stderr ? String(err.stderr) : err.message).trim();
+    log(`\nFAILED: ${describe(step)}\n${detail}\n`);
+    for (const line of detail.split('\n').slice(0, 6)) console.error(`      ${line}`);
     failed = true;
     break;
   }
@@ -176,3 +220,4 @@ if (failed) {
   process.exit(1);
 }
 console.log(`\nDone.${plan.rebootRequired ? ' A reboot is needed for this to take effect.' : ''}`);
+if (logFile) console.log(`Full output: ${logFile}`);

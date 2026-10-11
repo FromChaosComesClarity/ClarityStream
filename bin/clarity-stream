@@ -256,8 +256,26 @@ function phantomCmd(rest) {
   if (!card) { console.log(`${C.r}No GPU drives a display.${C.x}`); return 1; }
   console.log(`  display GPU        ${card.card} (${card.driver})`);
   console.log(`  spare connectors   ${ranked.join(', ') || 'none'}`);
-  const armed = ranked.length ? verifyArmed(connector ?? ranked[0]) : null;
-  if (armed) console.log(`  currently armed    ${armed.armed ? C.g + 'yes' + C.x : 'no'}  ${C.d}${armed.reason ?? ''}${C.x}`);
+  // Check whichever connector we actually wrote an EDID for, not just the
+  // first candidate: once armed, that connector is no longer "spare".
+  const target = connector ?? (() => {
+    const fsMod = require('node:fs');
+    const { FIRMWARE_DIR } = require('../packages/core/phantom');
+    try {
+      const f = fsMod.readdirSync(FIRMWARE_DIR).find((n) => /^clarity-stream-(.+)\.bin$/.test(n));
+      return f ? f.match(/^clarity-stream-(.+)\.bin$/)[1] : ranked[0];
+    } catch { return ranked[0]; }
+  })();
+
+  const armed = target ? verifyArmed(target) : null;
+  if (armed) {
+    console.log(`  phantom connector  ${target}`);
+    console.log(`  currently armed    ${armed.armed ? C.g + 'yes' + C.x : C.y + 'no' + C.x}  ${C.d}${armed.reason ?? ''}${C.x}`);
+    console.log(`  ${C.d}status ${armed.status}, EDID ${armed.edidLength} bytes, matches ours: ${armed.edidMatches}${C.x}`);
+    if (armed.modes?.length) {
+      console.log(`  modes offered      ${armed.modes.join(', ')}`);
+    }
+  }
   console.log('');
 
   if (!spec) {
