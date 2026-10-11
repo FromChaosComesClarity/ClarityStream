@@ -8,7 +8,7 @@ const { probe } = require('../packages/core/probe');
 const { diagnose } = require('../packages/core/diagnose');
 const { buildEdid } = require('../packages/core/edid');
 const { planAddParams, detect: detectBootloader } = require('../packages/core/bootloader');
-const { planArm, candidates, verifyArmed, restoreMonitorsCommands } = require('../packages/core/phantom');
+const { planArm, planDisarm, candidates, verifyArmed, restoreMonitorsCommands, toHelperPlan } = require('../packages/core/phantom');
 const verify = require('../packages/core/verify');
 const { applyAll, needsRestart, restartUserService, isPrivileged } = require('../packages/core/apply');
 
@@ -273,6 +273,8 @@ function phantomCmd(rest) {
   console.log(`${C.b}Plan: force ${plan.connector} on ${plan.card} as ${m[1]}x${m[2]}@${m[3] ?? 60}${C.x}`);
   console.log(`  timing   ${plan.timing.hActive}x${plan.timing.vActive} @ ${plan.timing.actualRefreshHz.toFixed(3)} Hz, ` +
               `${plan.timing.pixelClockMHz} MHz pixel clock (CVT reduced blanking)`);
+  console.log(`  modes    ${plan.advertised.map((a) => `${a.width}x${a.height}`).join(', ')}`);
+  console.log(`  ${C.d}all selectable at runtime; only the EDID itself needs a reboot${C.x}`);
   console.log(`  bootloader ${plan.bootloader?.kind ?? 'unknown'}${plan.bootloader?.usesUki ? ' (UKI)' : ''}`);
   console.log(`  kernel params  ${plan.kernelParams.join(' ')}`);
   console.log('');
@@ -283,6 +285,25 @@ function phantomCmd(rest) {
     else console.log(`  ${s.kind}  ${s.path}`);
   }
   console.log('');
+
+  if (rest.includes('--arm')) {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const pathMod = require('node:path');
+    const dir = pathMod.join(os.homedir(), '.cache', 'clarity-stream');
+    fs.mkdirSync(dir, { recursive: true });
+    const planFile = pathMod.join(dir, 'phantom-plan.json');
+    fs.writeFileSync(planFile, JSON.stringify(
+      toHelperPlan(plan, `Arm the phantom display on ${plan.connector} (${m[1]}x${m[2]})`), null, 2));
+    const helper = pathMod.join(__dirname, 'clarity-stream-helper');
+    console.log(`${C.b}Plan written to${C.x} ${planFile}`);
+    console.log(`${C.d}Check it without changing anything:${C.x}`);
+    console.log(`  node ${helper} ${planFile} --dry-run`);
+    console.log(`${C.b}Then apply it:${C.x}`);
+    console.log(`  sudo node ${helper} ${planFile}`);
+    console.log('');
+  }
+
   console.log(`${C.y}A reboot is required: NVIDIA does not hot-reload a firmware EDID.${C.x}`);
   if (plan.monitorStateAtRisk) {
     console.log(`${C.y}Adding an output makes Hyprland re-apply monitors.lua, discarding runtime${C.x}`);
@@ -315,6 +336,7 @@ switch (cmd) {
   console.log('  verify [output]      measure real pixels, prove the capture is not black');
   console.log('  measure <image>      report whether a captured frame is black');
   console.log('  phantom [WxH[@Hz]]   plan the phantom stream display');
+  console.log('                       [--arm] writes a plan for the privileged helper');
   console.log('  boot                 show how a kernel parameter would be added here');
     code = cmd ? 2 : 0;
 }

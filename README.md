@@ -119,10 +119,19 @@ generation (validated against `edid-decode`), the phantom display planner,
 bootloader and initramfs plumbing for Limine, GRUB and systemd-boot, and pixel
 verification.
 
-Next: the privileged helper that executes a plan, the Electron host UI, pairing
-against Sunshine's local API (the handshake is understood, it is `POST
-/api/pin` plus `moonlight pair --pin`), the Couch Mode app entry, and the
-client app.
+The privileged helper is built: `bin/clarity-stream-helper` validates every
+step of a plan against an allowlist before running any of it, and its refusals
+are tested.
+
+The phantom EDID advertises several modes, not one. NVIDIA reads a firmware
+EDID only at boot, so a single-mode phantom would mean a reboot every time you
+wanted a different client resolution. One EDID carries 1920x1080 preferred,
+2560x1440 as a second detailed timing, and 1600x900, 1280x800, 1280x720 and
+1024x768 as standard timings. All are selectable at runtime.
+
+Next: the Electron host UI, pairing against Sunshine's local API (the handshake
+is understood, it is `POST /api/pin` plus `moonlight pair --pin`), the Couch
+Mode app entry, and the client app.
 
 ## Licence
 

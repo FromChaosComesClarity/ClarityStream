@@ -78,3 +78,60 @@ test('known CVT-RB pixel clocks match the published values', () => {
   assert.strictEqual(cvtReducedBlanking(1920, 1080, 60).pixelClockMHz, 138.5);
   assert.strictEqual(cvtReducedBlanking(1680, 1050, 60).pixelClockMHz, 119.0);
 });
+
+// Multi-mode phantoms. The point of these is that NVIDIA reads a firmware
+// EDID only at boot, so every mode the phantom should ever offer has to be in
+// this one blob. A mode that silently fails to be advertised means a reboot
+// the user was promised they would not need.
+test('extra modes are advertised and decode back', () => {
+  const { bytes, advertised } = buildEdid({
+    width: 1920, height: 1080, refresh: 60,
+    extraModes: [[2560, 1440, 60], [1280, 720, 60], [1600, 900, 60], [1024, 768, 60]]
+  });
+  assert.strictEqual(bytes.length, 128);
+  const out = decode(bytes);
+
+  assert.match(out, /DTD 1:\s+1920x1080/);
+  assert.match(out, /DTD 2:\s+2560x1440/);   // too wide for a standard timing
+  assert.match(out, /1280x720/);
+  assert.match(out, /1600x900/);
+  assert.match(out, /1024x768/);
+  assert.doesNotMatch(out, /\b(Warning|Error|Failure)\b/i, out);
+
+  assert.strictEqual(advertised[0].how, 'preferred');
+  assert.ok(advertised.length >= 5);
+});
+
+test('range limits cover every advertised mode, not just the preferred one', () => {
+  const { bytes } = buildEdid({
+    width: 1280, height: 720, refresh: 60,
+    extraModes: [[2560, 1440, 60]]
+  });
+  const out = decode(bytes);
+  const m = out.match(/Monitor ranges \(Range Limits Only\): (\d+)-(\d+) Hz V, (\d+)-(\d+) kHz H, max dotclock (\d+) MHz/);
+  assert.ok(m, `no range limits in:\n${out}`);
+  // 2560x1440 needs about 89 kHz and 241.5 MHz; limits built from the
+  // preferred 1280x720 alone would cut it off.
+  assert.ok(Number(m[4]) >= 89, `H max ${m[4]} kHz excludes the 1440p mode`);
+  assert.ok(Number(m[5]) >= 242, `dotclock max ${m[5]} MHz excludes the 1440p mode`);
+});
+
+test('standard timings refuse what they cannot encode', () => {
+  const { standardTiming } = require('../packages/core/edid');
+  assert.strictEqual(standardTiming(2560, 1440, 60), null);  // width over 2288
+  assert.strictEqual(standardTiming(1366, 768, 60), null);   // not a multiple of 8
+  assert.strictEqual(standardTiming(1920, 1081, 60), null);  // no legal aspect ratio
+  assert.deepStrictEqual(standardTiming(1280, 720, 60), [129, 0xc0]);
+});
+
+test('the descriptor block is always exactly 127 bytes before the checksum', () => {
+  // This guard caught a real bug: a descriptor array passed to put() without
+  // being spread wrote one byte instead of eighteen.
+  for (const extras of [[], [[2560, 1440, 60]], [[1280, 720, 60], [1024, 768, 60]]]) {
+    const { bytes } = buildEdid({ width: 1920, height: 1080, refresh: 60, extraModes: extras });
+    assert.strictEqual(bytes.length, 128);
+    let sum = 0;
+    for (const b of bytes) sum = (sum + b) & 0xff;
+    assert.strictEqual(sum, 0);
+  }
+});

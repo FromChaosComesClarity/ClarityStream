@@ -1,0 +1,178 @@
+#!/usr/bin/env node
+'use strict';
+// The privileged half, and the only part of Clarity Stream that ever runs as
+// root. It takes a plan produced by the engine, checks every step against an
+// allowlist, prints exactly what it is about to do, and does only that.
+//
+// The engine cannot ask this to do anything the allowlist does not already
+// permit. That is deliberate: the unprivileged side builds plans, and a bug
+// there should not become a root exploit here. Paths are resolved and
+// compared literally, commands are matched by exact argv, and there is no
+// shell anywhere in this file.
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+
+// Files this helper may create or replace. Each is owned by Clarity Stream:
+// deleting any of them undoes what it did, and none belongs to a package.
+const WRITABLE = [
+  /^\/lib\/firmware\/edid\/clarity-stream-[A-Za-z0-9-]+\.bin$/,
+  /^\/usr\/lib\/firmware\/edid\/clarity-stream-[A-Za-z0-9-]+\.bin$/,
+  /^\/etc\/mkinitcpio\.conf\.d\/clarity-stream\.conf$/,
+  /^\/etc\/limine-entry-tool\.d\/clarity-stream\.conf$/,
+  /^\/etc\/default\/grub\.d\/clarity-stream\.cfg$/
+];
+
+// Commands this helper may run, matched on the whole argv, not a prefix.
+const RUNNABLE = [
+  ['mkinitcpio', '-P'],
+  ['limine-update'],
+  ['bootctl', 'update'],
+  ['grub-mkconfig', '-o', '/boot/grub/grub.cfg']
+];
+
+// setcap is allowed only onto a real binary, and only with these capabilities.
+const SETCAP_ALLOWED = new Set(['cap_sys_admin,cap_sys_nice+p', 'cap_sys_admin+p']);
+
+function allowedPath(p) {
+  const resolved = path.resolve(p);
+  // Reject anything that resolves somewhere other than where it claims, which
+  // is how a symlink would be used to escape the allowlist.
+  if (resolved !== p) return false;
+  return WRITABLE.some((re) => re.test(resolved));
+}
+
+function allowedRun(argv) {
+  return RUNNABLE.some((a) => a.length === argv.length && a.every((v, i) => v === argv[i]));
+}
+
+function describe(step) {
+  switch (step.kind) {
+    case 'write-file': return `write    ${step.path}${step.base64 ? ` (${Buffer.from(step.base64, 'base64').length} bytes)` : ''}`;
+    case 'remove-file': return `remove   ${step.path}`;
+    case 'run': return `run      ${step.argv.join(' ')}`;
+    case 'setcap': return `setcap   ${step.caps} ${step.path}`;
+    default: return `UNKNOWN  ${JSON.stringify(step)}`;
+  }
+}
+
+function validate(step) {
+  switch (step.kind) {
+    case 'write-file':
+      if (!allowedPath(step.path)) return `refusing to write ${step.path}: not a Clarity Stream file`;
+      if (typeof step.base64 !== 'string' && typeof step.contents !== 'string') return 'write-file has no contents';
+      return null;
+    case 'remove-file':
+      if (!allowedPath(step.path)) return `refusing to remove ${step.path}: not a Clarity Stream file`;
+      return null;
+    case 'run':
+      if (!Array.isArray(step.argv) || !allowedRun(step.argv)) return `refusing to run ${JSON.stringify(step.argv)}`;
+      return null;
+    case 'setcap':
+      if (!SETCAP_ALLOWED.has(step.caps)) return `refusing capabilities ${step.caps}`;
+      if (!fs.existsSync(step.path) || !fs.statSync(step.path).isFile()) return `no such binary ${step.path}`;
+      return null;
+    default:
+      return `unknown step kind ${step.kind}`;
+  }
+}
+
+function run(step) {
+  switch (step.kind) {
+    case 'write-file': {
+      const dir = path.dirname(step.path);
+      fs.mkdirSync(dir, { recursive: true });
+      const data = step.base64 ? Buffer.from(step.base64, 'base64') : Buffer.from(step.contents, 'utf8');
+      // Write then rename, so a failure never leaves a half-written file that
+      // the bootloader would happily try to use.
+      const tmp = `${step.path}.clarity-tmp`;
+      fs.writeFileSync(tmp, data, { mode: step.mode ?? 0o644 });
+      fs.renameSync(tmp, step.path);
+      return `wrote ${data.length} bytes`;
+    }
+    case 'remove-file':
+      if (!fs.existsSync(step.path)) return 'already absent';
+      fs.unlinkSync(step.path);
+      return 'removed';
+    case 'run': {
+      const out = execFileSync(step.argv[0], step.argv.slice(1), {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 600000
+      });
+      return (out.trim().split('\n').pop() || 'ok').slice(0, 200);
+    }
+    case 'setcap':
+      execFileSync('setcap', [step.caps, step.path], { stdio: ['ignore', 'pipe', 'pipe'] });
+      return 'capabilities set';
+    default:
+      throw new Error(`unreachable: ${step.kind}`);
+  }
+}
+
+const args = process.argv.slice(2);
+const planPath = args.find((a) => !a.startsWith('-'));
+const dryRun = args.includes('--dry-run');
+
+if (!planPath) {
+  console.error('usage: clarity-stream-helper <plan.json> [--dry-run]');
+  process.exit(2);
+}
+
+let plan;
+try {
+  plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+} catch (err) {
+  console.error(`could not read the plan: ${err.message}`);
+  process.exit(2);
+}
+
+const steps = Array.isArray(plan.steps) ? plan.steps : [];
+if (!steps.length) {
+  console.error('the plan contains no steps');
+  process.exit(2);
+}
+
+console.log(`Clarity Stream helper${dryRun ? ' (dry run)' : ''}`);
+if (plan.description) console.log(`  ${plan.description}`);
+console.log('');
+
+// Everything is checked before anything runs. A plan that is partly illegal
+// does not get to perform the legal half of itself.
+const problems = steps.map(validate).map((p, i) => (p ? `  step ${i + 1}: ${p}` : null)).filter(Boolean);
+for (const s of steps) console.log(`  ${describe(s)}`);
+console.log('');
+
+if (problems.length) {
+  console.error('Refused. The plan asks for something outside the allowlist:');
+  for (const p of problems) console.error(p);
+  process.exit(1);
+}
+
+if (dryRun) {
+  console.log('Dry run: nothing was changed.');
+  process.exit(0);
+}
+
+if (process.getuid && process.getuid() !== 0) {
+  console.error('This needs root. Run it with sudo.');
+  process.exit(1);
+}
+
+let failed = false;
+for (const [i, step] of steps.entries()) {
+  process.stdout.write(`  [${i + 1}/${steps.length}] ${describe(step)} ... `);
+  try {
+    console.log(run(step));
+  } catch (err) {
+    console.log('FAILED');
+    console.error(`      ${(err.stderr ? String(err.stderr) : err.message).trim().split('\n')[0]}`);
+    failed = true;
+    break;
+  }
+}
+
+if (failed) {
+  console.error('\nStopped at the first failure. Nothing after it was run.');
+  process.exit(1);
+}
+console.log(`\nDone.${plan.rebootRequired ? ' A reboot is needed for this to take effect.' : ''}`);

@@ -56,7 +56,18 @@ function candidates(facts) {
 // Produces the complete, declarative plan to arm the phantom. Nothing here
 // touches the system; the caller shows this to the user, who approves it, and
 // a single privileged helper executes the steps.
-function planArm(facts, { connector, width, height, refresh = 60, name } = {}) {
+// Modes a phantom should advertise beyond its preferred one. NVIDIA reads a
+// firmware EDID only at boot, so a mode missing from here costs a reboot
+// later. These cover the clients people actually stream to.
+const DEFAULT_EXTRA_MODES = [
+  [2560, 1440, 60],
+  [1600, 900, 60],
+  [1280, 800, 60],
+  [1280, 720, 60],
+  [1024, 768, 60]
+];
+
+function planArm(facts, { connector, width, height, refresh = 60, name, extraModes } = {}) {
   const { card, ranked } = candidates(facts);
   if (!card) {
     return { ok: false, reason: 'No GPU on this machine is driving a display.' };
@@ -76,7 +87,12 @@ function planArm(facts, { connector, width, height, refresh = 60, name } = {}) {
     };
   }
 
-  const { bytes, timing } = buildEdid({ width, height, refresh, name: name ?? 'Clarity Strm' });
+  const built = buildEdid({
+    width, height, refresh,
+    name: name ?? 'Clarity Strm',
+    extraModes: extraModes ?? DEFAULT_EXTRA_MODES
+  });
+  const { bytes, timing } = built;
   const file = edidFileName(conn);
   const target = path.join(FIRMWARE_DIR, file);
 
@@ -123,6 +139,7 @@ function planArm(facts, { connector, width, height, refresh = 60, name } = {}) {
     edidPath: target,
     edidBytes: bytes,
     timing,
+    advertised: built.advertised,
     kernelParams: params,
     bootloader: boot.bootloader,
     alreadyActive: Boolean(boot.alreadyActive),
@@ -206,8 +223,24 @@ function verifyArmed(connector) {
   };
 }
 
+// Serialises a plan into the shape the privileged helper accepts. Binary
+// contents travel as base64 because a plan is JSON on its way through sudo.
+function toHelperPlan(plan, description) {
+  return {
+    description,
+    rebootRequired: Boolean(plan.rebootRequired),
+    steps: (plan.steps ?? []).map((s) => {
+      if (s.kind !== 'write-file') return s;
+      const { contents, binary, ...rest } = s;
+      return Buffer.isBuffer(contents)
+        ? { ...rest, base64: contents.toString('base64') }
+        : { ...rest, contents };
+    })
+  };
+}
+
 module.exports = {
-  candidates, planArm, planDisarm, verifyArmed,
+  candidates, planArm, planDisarm, verifyArmed, toHelperPlan, DEFAULT_EXTRA_MODES,
   snapshotMonitors, restoreMonitorsCommands,
   FIRMWARE_DIR, MKINITCPIO_DROPIN, edidFileName
 };

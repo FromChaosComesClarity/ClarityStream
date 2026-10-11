@@ -14,6 +14,7 @@ packages/core/        the engine, no UI, no privilege, runnable over SSH
   bootloader.js       Limine, GRUB and systemd-boot, as drop-ins
   verify.js           measures real pixels and interprets the result
 bin/clarity-stream    headless CLI over all of the above
+bin/clarity-stream-helper  the only part that runs as root
 apps/host/            Electron host UI
 apps/client/          Electron client app
 ```
@@ -56,10 +57,29 @@ entry that launches Clarity's gamepad-driven Couch Mode, and game selection
 happens there, over the stream, in a UI built for it. A Desktop entry comes
 along for the cases where you want the machine itself.
 
+## The privileged helper
+
+`bin/clarity-stream-helper` is the only component that ever runs as root. It
+takes a plan, validates every step against an allowlist, prints what it will
+do, and does only that. There is no shell anywhere in it.
+
+- Writable paths are a fixed set of regexes, every one of them a file Clarity
+  Stream owns. Deleting those files undoes everything; none belongs to a
+  package.
+- Runnable commands are matched on the whole argv, not a prefix, so
+  `mkinitcpio -P` is allowed and `mkinitcpio -P ; id` is not.
+- `setcap` accepts only the two capability strings KMS capture needs.
+- A path that does not resolve to itself is refused, which closes the symlink
+  and `..` routes out of the allowlist.
+- Validation runs over the entire plan before any step executes, so a plan
+  that is partly illegal does not get to perform the legal half of itself.
+
+The engine cannot ask it to do anything the allowlist does not already permit.
+That is the point: the unprivileged side builds plans, and a bug there should
+not become a root exploit here. The refusals are tested.
+
 ## Still to build
 
-- The privileged helper that executes a plan, as one pkexec call with a policy
-  file, rather than a shell script run under sudo.
 - The Electron host UI over the engine: findings, the plan, an Apply button,
   and the verification result as a measured number.
 - Pairing against Sunshine's local HTTPS API so a PIN is typed once, in
