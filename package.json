@@ -12,7 +12,8 @@
     "probe": "node bin/clarity-stream probe",
     "test": "node --test test/",
     "start": "electron .",
-    "start:dev": "electron . --dev"
+    "start:dev": "electron . --dev",
+    "start:client": "electron apps/client/main.js"
   },
   "license": "MIT",
   "private": true,

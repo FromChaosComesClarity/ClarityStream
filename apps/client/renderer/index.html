@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;">
+<title>Clarity Stream Client</title>
+<link rel="stylesheet" href="../../shared/ui.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <h1>Clarity Stream</h1>
+      <p class="muted">play from another machine</p>
+    </div>
+  </div>
+  <div class="top-right">
+    <span id="moonlightPill" class="pill">…</span>
+    <button id="refresh" class="ghost">Look again</button>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <div class="card-head">
+      <h3>Hosts</h3>
+      <span id="hostCount" class="muted"></span>
+    </div>
+    <ul id="hosts" class="hosts"><li class="pad muted">looking…</li></ul>
+  </section>
+
+  <section id="playCard" class="card hidden">
+    <div class="card-head">
+      <h3 id="playTitle">Play</h3>
+      <span id="playHost" class="muted"></span>
+    </div>
+    <div class="pad">
+      <ul id="apps" class="applist"></ul>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h3>Quality</h3>
+      <span class="muted">applied to the next session</span>
+    </div>
+    <div class="pad quality">
+      <label>Resolution
+        <select id="resolution">
+          <option>3840x2160</option><option>2560x1440</option><option>1920x1080</option>
+          <option>1600x900</option><option>1366x768</option><option>1280x800</option>
+          <option>1280x720</option><option>1024x768</option>
+        </select>
+      </label>
+      <label>Frame rate
+        <select id="fps"><option>30</option><option>60</option><option>90</option><option>120</option></select>
+      </label>
+      <label>Bitrate (Kbps)
+        <input id="bitrate" type="text" inputmode="numeric" size="7">
+      </label>
+      <label>Window
+        <select id="displayMode">
+          <option value="fullscreen">fullscreen</option>
+          <option value="borderless">borderless</option>
+          <option value="windowed">windowed</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="vsync"> V-Sync</label>
+      <p id="resHint" class="muted narrow"></p>
+    </div>
+  </section>
+</main>
+
+<div id="scrollbar" aria-hidden="true"><div id="scrollthumb"></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<dialog id="pairDialog">
+  <h3>Pairing with <span id="pairHost"></span></h3>
+  <p class="muted narrow">
+    Moonlight is asking the host to pair. Approve it there with this PIN.
+    On a Clarity Stream host, its window will offer to accept it.
+  </p>
+  <div class="pin" id="pairPin">····</div>
+  <p class="muted narrow" id="pairHint">
+    Any other host: open its Sunshine web interface and enter the PIN there.
+  </p>
+  <div class="row end">
+    <button id="pairWeb" class="secondary">Open the host's web interface</button>
+    <button id="pairDone" class="primary">Done</button>
+  </div>
+</dialog>
+
+<script src="../../shared/scrollbar.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
