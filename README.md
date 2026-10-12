@@ -140,13 +140,35 @@ wanted a different client resolution. One EDID carries 1920x1080 preferred,
 2560x1440 as a second detailed timing, and 1600x900, 1280x800, 1280x720 and
 1024x768 as standard timings. All are selectable at runtime.
 
-The host UI is built: `npm start`. It shows what would stop a stream and why,
-fixes what it can without root, manages the phantom, publishes the Moonlight
-entries, and measures real pixels on demand. It is a face over the same engine
-the CLI uses, so the two can never disagree.
+Both apps are built.
 
-Next: pairing against Sunshine's local API (the handshake is understood, it is
-`POST /api/pin` plus `moonlight pair --pin`), and the client app.
+**The host** (`npm start`) shows what would stop a stream and why, fixes what
+it can without root, manages the phantom, publishes the Moonlight entries, and
+measures real pixels on demand.
+
+**The client** (`npm run start:client`) finds hosts on the network, shows which
+are reachable, busy or unpaired, and starts a session in one click with Couch
+Mode featured above the rest. It drives moonlight-qt rather than
+reimplementing it, and reads pairing state from Moonlight's own configuration
+so the two never disagree.
+
+Both are faces over the same engine the CLI uses.
+
+## Installing it
+
+```
+npm run pkg
+sudo pacman -U dist/pkg/clarity-stream-common-*.zst dist/pkg/clarity-stream-0*.zst
+```
+
+Three packages: a shared one carrying the engine and a vendored Electron, and
+a small one for each app. Nothing outside them is required, not even a system
+Node: the CLI and the root helper run on the bundled Electron. There is no
+AppImage, and [docs/PACKAGING.md](docs/PACKAGING.md) explains why this is the
+one project here that cannot be one.
+
+Next: pairing accepted from the host's own window (the handshake is
+understood, it is `POST /api/pin` plus `moonlight pair --pin`).
 
 ## Licence
 

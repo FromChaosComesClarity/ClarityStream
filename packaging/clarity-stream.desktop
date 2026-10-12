@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Clarity Stream
+GenericName=Game streaming host
+Comment=Make this machine stream its games, and prove that it does
+Exec=clarity-stream-host
+Icon=clarity-stream
+Terminal=false
+Categories=Game;Settings;
+Keywords=sunshine;moonlight;stream;remote play;
+StartupWMClass=clarity-stream

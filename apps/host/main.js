@@ -23,6 +23,17 @@ const verify = require('../../packages/core/verify');
 const sunshineApps = require('../../packages/core/sunshine-apps');
 const phantomScript = require('../../packages/core/phantom-script');
 const clarityApp = require('../../packages/core/clarity-app');
+const paths = require('../../packages/core/paths');
+
+// Set explicitly, not inherited. Launched from a checkout as `electron .`,
+// Electron reads the app name out of package.json and the Wayland class comes
+// out right by accident. Launched the way the package does it, as
+// `electron /opt/clarity-stream/app/apps/host/main.js`, the app directory is
+// the one holding main.js, there is no package.json there, and the window
+// arrives with the class "electron". Desktop entries and window rules that
+// name clarity-stream then match nothing.
+app.setName('clarity-stream');
+app.setDesktopName('clarity-stream.desktop');
 
 const DEV = process.argv.includes('--dev');
 let win = null;
@@ -162,14 +173,13 @@ ipcMain.handle('phantom:plan', (_e, { width, height, refresh, connector } = {}) 
   const planFile = path.join(dir, 'phantom-plan.json');
   fs.writeFileSync(planFile, JSON.stringify(
     phantom.toHelperPlan(plan, `Arm the phantom display on ${plan.connector} (${width}x${height})`), null, 2));
-  const helper = path.join(__dirname, '..', '..', 'bin', 'clarity-stream-helper');
   return {
     ...plan,
     edidBytes: undefined,                      // not serialisable, not needed
     planFile,
-    // sudo resets PATH, and this machine has no system node, so the absolute
-    // interpreter is the only form that works.
-    command: `sudo ${process.execPath} ${helper} ${planFile}`
+    // Packaged, this is one fixed path. In a checkout it has to name the
+    // interpreter, because sudo resets PATH past a per-user Node.
+    command: paths.helperCommand(planFile)
   };
 });
 
@@ -195,7 +205,7 @@ ipcMain.handle('phantom:installService', () => {
   const f = facts();
   const r = phantomService.install({
     nodePath: process.execPath,
-    cliPath: path.join(__dirname, '..', '..', 'bin', 'clarity-stream'),
+    cliPath: paths.cliPath(),
     sunshineUnit: f.sunshine.unitName
   });
   cache.at = 0;

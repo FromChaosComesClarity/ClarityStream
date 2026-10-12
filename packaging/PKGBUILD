@@ -1,0 +1,91 @@
+# Maintainer: Jose <joserobertoazevedo@gmail.com>
+#
+# Three packages from one build, because the Electron runtime is ~250 MB and
+# the host and the client should not each carry their own copy.
+#
+#   clarity-stream-common  the runtime and the engine
+#   clarity-stream         the host: UI, CLI, root helper, phantom unit
+#   clarity-stream-client  the client UI
+#
+# Everything is vendored. There is no dependency on a system nodejs or a
+# system electron, deliberately: the CLI and the root helper run on the
+# bundled Electron through ELECTRON_RUN_AS_NODE, which also sidesteps sudo
+# resetting PATH past a per-user Node.
+
+pkgbase=clarity-stream
+pkgname=('clarity-stream-common' 'clarity-stream' 'clarity-stream-client')
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Game streaming from a Linux box that actually works, including on NVIDIA"
+arch=('x86_64')
+url="https://github.com/FromChaosComesClarity/ClarityStream"
+license=('MIT')
+makedepends=()
+source=("$pkgbase-$pkgver.tar.gz")
+sha256sums=('SKIP')
+options=(!strip !debug)
+
+package_clarity-stream-common() {
+  pkgdesc="Clarity Stream, shared runtime and engine"
+  depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'libnotify')
+
+  install -d "$pkgdir/opt/clarity-stream"
+  cp -a "$srcdir/$pkgbase-$pkgver/app" "$pkgdir/opt/clarity-stream/app"
+  cp -a "$srcdir/$pkgbase-$pkgver/electron" "$pkgdir/opt/clarity-stream/electron"
+
+  # The Electron binary needs its setuid sandbox helper to stay setuid, and
+  # everything else world-readable.
+  chmod 755 "$pkgdir/opt/clarity-stream/electron/electron"
+  [ -f "$pkgdir/opt/clarity-stream/electron/chrome-sandbox" ] &&
+    chmod 4755 "$pkgdir/opt/clarity-stream/electron/chrome-sandbox"
+
+  install -Dm644 "$srcdir/$pkgbase-$pkgver/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_clarity-stream() {
+  pkgdesc="Clarity Stream host: find out why a machine will not stream, then fix it"
+  depends=('clarity-stream-common')
+  optdepends=('sunshine: the streaming host this configures'
+              'ffmpeg: measuring whether a captured frame is black'
+              'grim: reading back what the compositor is drawing'
+              'hyprland: phantom display placement'
+              'moonlight-qt: if this machine is also a client')
+  backup=()
+
+  install -Dm755 "$srcdir/$pkgbase-$pkgver/packaging/clarity-stream.sh" \
+    "$pkgdir/usr/bin/clarity-stream"
+  install -Dm755 "$srcdir/$pkgbase-$pkgver/packaging/clarity-stream-host.sh" \
+    "$pkgdir/usr/bin/clarity-stream-host"
+
+  # Root-owned, fixed path. Both matter for something that runs under sudo.
+  install -Dm755 "$srcdir/$pkgbase-$pkgver/packaging/clarity-stream-helper.sh" \
+    "$pkgdir/usr/lib/clarity-stream/helper"
+
+  install -Dm644 "$srcdir/$pkgbase-$pkgver/packaging/clarity-stream.desktop" \
+    "$pkgdir/usr/share/applications/clarity-stream.desktop"
+  install -Dm644 "$srcdir/$pkgbase-$pkgver/packaging/icons/clarity-stream.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/clarity-stream.svg"
+
+  install -Dm644 "$srcdir/$pkgbase-$pkgver/packaging/clarity-stream-phantom.service" \
+    "$pkgdir/usr/lib/systemd/user/clarity-stream-phantom.service"
+
+  install -Dm644 "$srcdir/$pkgbase-$pkgver/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_clarity-stream-client() {
+  pkgdesc="Clarity Stream client: play from another machine"
+  depends=('clarity-stream-common' 'moonlight-qt')
+  optdepends=('avahi: finding hosts on the network')
+
+  install -Dm755 "$srcdir/$pkgbase-$pkgver/packaging/clarity-stream-client.sh" \
+    "$pkgdir/usr/bin/clarity-stream-client"
+  install -Dm644 "$srcdir/$pkgbase-$pkgver/packaging/clarity-stream-client.desktop" \
+    "$pkgdir/usr/share/applications/clarity-stream-client.desktop"
+  install -Dm644 "$srcdir/$pkgbase-$pkgver/packaging/icons/clarity-stream-client.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/clarity-stream-client.svg"
+
+  install -Dm644 "$srcdir/$pkgbase-$pkgver/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

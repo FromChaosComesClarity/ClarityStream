@@ -13,7 +13,8 @@
     "test": "node --test test/",
     "start": "electron .",
     "start:dev": "electron . --dev",
-    "start:client": "electron apps/client/main.js"
+    "start:client": "electron apps/client/main.js",
+    "pkg": "node scripts/build-package.mjs"
   },
   "license": "MIT",
   "private": true,

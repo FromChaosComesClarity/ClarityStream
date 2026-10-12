@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Clarity Stream Client
+GenericName=Game streaming client
+Comment=Play games from another machine
+Exec=clarity-stream-client
+Icon=clarity-stream-client
+Terminal=false
+Categories=Game;
+Keywords=sunshine;moonlight;stream;remote play;
+StartupWMClass=clarity-stream-client

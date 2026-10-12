@@ -2,3 +2,4 @@ node_modules/
 dist/
 *.AppImage
 .probe-cache.json
+dist/

@@ -385,7 +385,7 @@ function phantomCmd(rest) {
     if (rest.includes('--install-service')) {
       const r = phantomService.install({
         nodePath: process.execPath,
-        cliPath: pathMod3.resolve(__filename),
+        cliPath: require('../packages/core/paths').cliPath(),
         sunshineUnit: facts2.sunshine.unitName
       });
       console.log(`${C.b}${r.path}${C.x}`);
@@ -519,17 +519,13 @@ function phantomCmd(rest) {
     const planFile = pathMod.join(dir, 'phantom-plan.json');
     fs.writeFileSync(planFile, JSON.stringify(
       toHelperPlan(plan, `Arm the phantom display on ${plan.connector} (${m[1]}x${m[2]})`), null, 2));
-    const helper = pathMod.join(__dirname, 'clarity-stream-helper');
-    // sudo resets PATH to secure_path, so a node installed per-user (mise,
-    // nvm, asdf) is invisible to root and the command fails with
-    // "node: command not found". process.execPath is the interpreter already
-    // running this, by absolute path, which is the one that is known to work.
-    const node = process.execPath;
+    const paths = require('../packages/core/paths');
+    const apply = paths.helperCommand(planFile);
     console.log(`${C.b}Plan written to${C.x} ${planFile}`);
     console.log(`${C.d}Check it without changing anything:${C.x}`);
-    console.log(`  ${node} ${helper} ${planFile} --dry-run`);
+    console.log(`  ${apply.replace(/^sudo /, '')} --dry-run`);
     console.log(`${C.b}Then apply it:${C.x}`);
-    console.log(`  sudo ${node} ${helper} ${planFile}`);
+    console.log(`  ${apply}`);
     console.log('');
   }
 

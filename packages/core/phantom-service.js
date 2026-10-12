@@ -20,6 +20,17 @@ const UNIT_NAME = 'clarity-stream-phantom.service';
 const UNIT_DIR = path.join(os.homedir(), '.config', 'systemd', 'user');
 const UNIT_PATH = path.join(UNIT_DIR, UNIT_NAME);
 
+// A packaged install already ships this unit, pointing at /usr/bin paths that
+// do not move. Writing a second copy into the user's directory would shadow
+// it and pin the service to wherever the development checkout happened to be
+// that day, so the packaged one is used when it is there.
+const PACKAGED_UNIT = `/usr/lib/systemd/user/${UNIT_NAME}`;
+const PACKAGED_CLI = '/usr/bin/clarity-stream';
+
+function isPackaged() {
+  return fs.existsSync(PACKAGED_UNIT) && fs.existsSync(PACKAGED_CLI);
+}
+
 function unitText({ nodePath, cliPath, sunshineUnit }) {
   return `[Unit]
 Description=Clarity Stream, park the phantom stream display
@@ -53,12 +64,20 @@ WantedBy=graphical-session.target
 }
 
 function install({ nodePath, cliPath, sunshineUnit }) {
-  fs.mkdirSync(UNIT_DIR, { recursive: true });
-  fs.writeFileSync(UNIT_PATH, unitText({ nodePath, cliPath, sunshineUnit }), { mode: 0o644 });
+  const packaged = isPackaged();
+  if (!packaged) {
+    fs.mkdirSync(UNIT_DIR, { recursive: true });
+    fs.writeFileSync(UNIT_PATH, unitText({ nodePath, cliPath, sunshineUnit }), { mode: 0o644 });
+  } else {
+    // A user unit left over from a development checkout would take priority
+    // over the packaged one and keep pointing at a path that may be gone.
+    try { fs.unlinkSync(UNIT_PATH); } catch { /* nothing to remove */ }
+  }
   const reload = tryExec('systemctl', ['--user', 'daemon-reload'], { timeout: 20000 });
-  const enable = tryExec('systemctl', ['--user', 'enable', UNIT_NAME], { timeout: 20000 });
+  const enable = tryExec('systemctl', ['--user', 'enable', '--now', UNIT_NAME], { timeout: 30000 });
   return {
-    path: UNIT_PATH,
+    path: packaged ? PACKAGED_UNIT : UNIT_PATH,
+    packaged,
     reloaded: reload.ok,
     enabled: enable.ok,
     detail: enable.ok ? null : (enable.stderr || '').trim()
@@ -69,10 +88,11 @@ function status() {
   const enabled = tryExec('systemctl', ['--user', 'is-enabled', UNIT_NAME]);
   const active = tryExec('systemctl', ['--user', 'is-active', UNIT_NAME]);
   return {
-    installed: fs.existsSync(UNIT_PATH),
+    installed: fs.existsSync(UNIT_PATH) || fs.existsSync(PACKAGED_UNIT),
+    packaged: isPackaged(),
     enabled: (enabled.stdout || '').trim() || 'not-found',
     active: (active.stdout || '').trim() || 'unknown'
   };
 }
 
-module.exports = { install, status, unitText, UNIT_NAME, UNIT_PATH };
+module.exports = { install, status, unitText, isPackaged, UNIT_NAME, UNIT_PATH, PACKAGED_UNIT };
