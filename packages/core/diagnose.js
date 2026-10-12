@@ -43,7 +43,10 @@ function diagnose(facts) {
     if (!hit) continue;
     findings.push({
       id: fault.id,
-      title: fault.title,
+      // A detector may restate the headline. An unknown reported under a
+      // title that asserts the fault is present contradicts its own evidence,
+      // which is the one thing this engine must never do.
+      title: hit.title ?? fault.title,
       severity: fault.severity,
       evidence: hit.evidence,
       detail: hit.detail ?? null,

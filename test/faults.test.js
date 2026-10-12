@@ -168,7 +168,8 @@ test('a compositor that cannot be reached is unknown, not a fault', () => {
   assert.ok(absent, 'it should still say something');
   assert.strictEqual(absent.unknown, true);
   assert.strictEqual(absent.fix.kind, 'none');
-  assert.match(absent.evidence, /could not be asked/i);
+  assert.match(absent.evidence, /did not answer/i);
+  assert.match(absent.title, /could not check/i);
 
   assert.strictEqual(byId('phantom-holds-a-user-workspace').detect(f), null);
   assert.strictEqual(byId('phantom-touches-the-desktop').detect(f), null);
@@ -197,4 +198,14 @@ test('a real blocker still reads as a blocker', () => {
   const r = diagnose(f);
   assert.strictEqual(r.streamable, false);
   assert.ok(r.blockers.some((b) => b.id === 'nvidia-wlr-capture-is-black'));
+});
+
+test('an unknown does not keep a headline that asserts the fault', () => {
+  const f = healthy();
+  f.compositor.monitors = null;
+  const finding = diagnose(f).findings.find((x) => x.id === 'phantom-armed-but-absent');
+  assert.ok(finding);
+  // The title must not claim the thing the evidence says was never checked.
+  assert.doesNotMatch(finding.title, /does not have it up/i);
+  assert.match(finding.title, /could not check/i);
 });

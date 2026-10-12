@@ -311,7 +311,8 @@ const FAULTS = [
       // false blocker, and a false blocker is worse than no answer.
       if (f.compositor.monitors === null || f.compositor.monitors === undefined) {
         return {
-          evidence: 'The compositor could not be asked whether the phantom is up.',
+          title: 'Could not check whether the phantom display is up',
+          evidence: 'The compositor did not answer, so there is nothing to report either way.',
           detail: 'Run this inside the graphical session to get an answer.',
           unknown: true,
           fix: { kind: 'none' }
