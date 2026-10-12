@@ -115,12 +115,24 @@ function compareFrames(a, b) {
     return { ok: true, verdict: 'black', text: 'Both frames are black. Nothing is being captured.' };
   }
   if (identical) {
+    // Identical frames are only a problem when there is nothing in them. A
+    // detailed frame that does not change is a real picture of something
+    // standing still, which is exactly what an idle display looks like, and
+    // it already proves the capture path is not black. Calling that "static"
+    // reads as a fault and it is not one.
+    if (a.lowDetail) {
+      return {
+        ok: true,
+        verdict: 'stuck',
+        text: 'Both frames are identical and nearly featureless, which looks like a placeholder ' +
+              'or a loading screen rather than a picture.'
+      };
+    }
     return {
       ok: true,
-      verdict: 'static',
-      text: a.lowDetail
-        ? 'Both frames are identical and nearly featureless, which looks like a placeholder or a loading screen rather than a stream.'
-        : 'Both frames are identical. Something is on screen but nothing is updating.'
+      verdict: 'still',
+      text: `A real picture, not changing between frames (stddev ${a.stddev}). ` +
+            'Normal for a display with nothing moving on it; the capture path is working.'
     };
   }
   if (a.lowDetail && b.lowDetail) {

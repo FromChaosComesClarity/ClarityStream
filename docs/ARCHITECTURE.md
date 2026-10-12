@@ -21,6 +21,7 @@ packages/core/        the engine, no UI, no privilege, runnable over SSH
   apply.js            runs the fixes that need no root
 bin/clarity-stream    headless CLI over all of the above
 bin/clarity-stream-helper  the only part that runs as root
+apps/host/            Electron host UI, a face over packages/core
 apps/host/            Electron host UI
 apps/client/          Electron client app
 ```
@@ -99,10 +100,31 @@ either a runtime bundled beside it or a rewrite into something root can always
 run. Its allowlist logic is small enough for the second option to be
 realistic.
 
+## The host UI
+
+A window over `packages/core`, not a second implementation. Every number it
+shows comes from the same engine the CLI uses, so the two cannot disagree.
+The renderer has no node integration; everything crosses through preload as a
+named channel, and there is no generic invoke passthrough.
+
+Two things about it that are not obvious:
+
+**The scrollbar is drawn, not styled.** On this Electron build
+`::-webkit-scrollbar` is ignored outright, measured by forcing `width: 40px`
+and watching the scrollbar stay 10px. The standard `scrollbar-width` and
+`scrollbar-color` do reach it, but that renderer draws stepper arrows at both
+ends which no selector removes, and disabling Chromium's Fluent scrollbar
+feature did not bring the pseudo-elements back. So the native one is hidden
+and a thumb is painted instead. Scrolling itself is untouched: the wheel,
+keys and trackpad still drive the real document.
+
+**Long captions wrap.** A flex row without `flex-wrap` and a long caption
+pushes a card wider than its container, which gives the whole page horizontal
+overflow and clips every card at the window edge. It showed up the first time
+the window was tiled to 688px, which is just a normal tile on a 3440 monitor.
+
 ## Still to build
 
-- The Electron host UI over the engine: findings, the plan, an Apply button,
-  and the verification result as a measured number.
 - Pairing against Sunshine's local HTTPS API so a PIN is typed once, in
   Clarity Stream, instead of in a browser.
 - The Couch Mode app entry, written into `apps.json` without disturbing

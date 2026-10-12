@@ -30,11 +30,18 @@ PartOf=graphical-session.target
 # exist and be parked before it does.
 ${sunshineUnit ? `Before=${sunshineUnit}\n` : ''}
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-# The command waits for Hyprland to answer before doing anything, because
-# graphical-session.target can be reached before the compositor is listening.
-ExecStart=${nodePath} ${cliPath} phantom --park --wait 30
+# Long-running rather than oneshot. Parking once is not enough: anything that
+# makes Hyprland re-read its config drops the runtime placement, and on this
+# machine monitors.lua is rewritten by a bar panel which stores the phantom at
+# its original position beside the desktop. Observed drifting back mid-session
+# with the oneshot version. This parks once, then watches Hyprland's event
+# socket and re-parks whenever it moves.
+Type=simple
+# Waits for Hyprland to answer first, because graphical-session.target can be
+# reached before the compositor is listening.
+ExecStart=${nodePath} ${cliPath} phantom --watch --wait 30
+Restart=on-failure
+RestartSec=5s
 # Deliberately no ExecStop. Taking the phantom down when this unit stops
 # would mean restarting this unit silently kills capture for a live Sunshine
 # session, and Hyprland drops the output at logout regardless. Use

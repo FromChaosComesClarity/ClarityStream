@@ -52,11 +52,21 @@ test('every sample survives the read', () => {
   assert.ok(m.max === 255 || m.max > 200, `peak was ${m.max}, bright samples went missing`);
 });
 
-test('two identical frames are static, not live', () => {
+test('two identical detailed frames are a still picture, not a fault', () => {
+  // An idle display legitimately shows the same thing twice. The capture
+  // path is proven by the detail, not by movement.
   const a = measureImage(lavfi('testsrc=s=320x240', 'same1'));
   const b = measureImage(lavfi('testsrc=s=320x240', 'same2'));
   assert.strictEqual(a.signature, b.signature);
-  assert.strictEqual(compareFrames(a, b).verdict, 'static');
+  const c = compareFrames(a, b);
+  assert.strictEqual(c.verdict, 'still');
+  assert.match(c.text, /capture path is working/);
+});
+
+test('two identical featureless frames are stuck, which is a fault', () => {
+  const a = measureImage(lavfi('color=gray:s=320x240', 'flat1'));
+  const b = measureImage(lavfi('color=gray:s=320x240', 'flat2'));
+  assert.strictEqual(compareFrames(a, b).verdict, 'stuck');
 });
 
 test('two different frames are live', () => {

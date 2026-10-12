@@ -140,9 +140,13 @@ wanted a different client resolution. One EDID carries 1920x1080 preferred,
 2560x1440 as a second detailed timing, and 1600x900, 1280x800, 1280x720 and
 1024x768 as standard timings. All are selectable at runtime.
 
-Next: the Electron host UI, pairing against Sunshine's local API (the handshake
-is understood, it is `POST /api/pin` plus `moonlight pair --pin`), the Couch
-Mode app entry, and the client app.
+The host UI is built: `npm start`. It shows what would stop a stream and why,
+fixes what it can without root, manages the phantom, publishes the Moonlight
+entries, and measures real pixels on demand. It is a face over the same engine
+the CLI uses, so the two can never disagree.
+
+Next: pairing against Sunshine's local API (the handshake is understood, it is
+`POST /api/pin` plus `moonlight pair --pin`), and the client app.
 
 ## Licence
 

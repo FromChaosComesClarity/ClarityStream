@@ -13,6 +13,12 @@ const verify = require('../packages/core/verify');
 const { applyAll, needsRestart, restartUserService, isPrivileged } = require('../packages/core/apply');
 const pathMod3 = require('node:path');
 
+// Returned by a command that must keep running. The dispatcher calls
+// process.exit on whatever a command returns, which killed the watcher the
+// instant it finished setting itself up: systemd saw a clean exit and marked
+// the unit inactive while the phantom sat where it had drifted.
+const KEEP_ALIVE = Symbol('keep-alive');
+
 const C = process.stdout.isTTY
   ? { r: '\x1b[31m', y: '\x1b[33m', g: '\x1b[32m', d: '\x1b[2m', b: '\x1b[1m', x: '\x1b[0m' }
   : { r: '', y: '', g: '', d: '', b: '', x: '' };
@@ -357,7 +363,8 @@ function phantomCmd(rest) {
 
   // --park / --unpark / --install-service act on a phantom that already
   // exists, so they run before the planning path below.
-  if (rest.includes('--park') || rest.includes('--unpark') || rest.includes('--install-service')) {
+  if (rest.includes('--park') || rest.includes('--unpark') ||
+      rest.includes('--install-service') || rest.includes('--watch')) {
     const waitIdx = rest.indexOf('--wait');
     const waitSecs = waitIdx === -1 ? 0 : Number(rest[waitIdx + 1] || 30);
 
@@ -395,6 +402,47 @@ function phantomCmd(rest) {
     }
 
     const mode = `${ph.preferredMode ?? '1920x1080'}@60`;
+
+    if (rest.includes('--watch')) {
+      const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
+      const say = (m) => console.log(`${stamp()}  ${m}`);
+
+      const doPark = (why) => {
+        const res = hypr.park(ph.connector, { mode });
+        say(`${why}: ${res.ok ? `parked at ${res.position}, workspace ${res.workspace}` : 'park failed'}` +
+            (res.strandedWorkspaces?.length ? `, still holding ${res.strandedWorkspaces.join(',')}` : ''));
+        return res;
+      };
+
+      const first = doPark('start');
+      let expected = first.position;
+
+      // Hyprland emits several events for one reconfigure, so a reload is
+      // coalesced rather than parked five times in a row.
+      let timer = null;
+      const onChange = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          const now = (hypr.monitors() ?? []).find((m) => m.name === ph.connector);
+          const held = hypr.workspaceOn(ph.connector).map((w) => w.id);
+          const drifted = !now
+            || `${now.x}x${now.y}` !== expected
+            || held.some((id) => id !== 11);
+          if (!drifted) return;
+          const res = doPark(now ? 'drifted back' : 'went missing');
+          if (res.ok) expected = res.position;
+        }, 800);
+      };
+
+      hypr.watchMonitorEvents(onChange, { log: (m) => say(m) });
+      say(`watching ${hypr.eventSocketPath() ?? 'no event socket'}`);
+
+      for (const sig of ['SIGINT', 'SIGTERM']) {
+        process.on(sig, () => { say(`${sig}, stopping`); process.exit(0); });
+      }
+      return KEEP_ALIVE;
+    }
+
     const r = hypr.park(ph.connector, { mode });
     console.log(`${C.b}${ph.connector}${C.x} parked at ${r.position}, workspace ${r.workspace}`);
     if (r.strandedWorkspaces.length) {
@@ -525,4 +573,6 @@ switch (cmd) {
   console.log('  boot                 show how a kernel parameter would be added here');
     code = cmd ? 2 : 0;
 }
-process.exit(code);
+// A long-running command keeps the event loop alive on its own; exiting here
+// would end it before it had done anything.
+if (code !== KEEP_ALIVE) process.exit(code);

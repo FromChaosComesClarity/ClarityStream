@@ -12,6 +12,8 @@
 //      leaves it off while still answering `ok`. Measured: a phantom
 //      "re-enabled" with mode and position alone stayed dark.
 
+const fs = require('node:fs');
+const path = require('node:path');
 const { tryExec } = require('./run');
 
 // hyprctl eval answers `ok` on success and `error: ...` on failure, both with
@@ -172,8 +174,68 @@ function park(connector, { mode, scale = 1, workspace = 11 } = {}) {
   };
 }
 
+// Hyprland's event socket. Parking is runtime state, and anything that makes
+// the compositor re-read its config throws it away: on this machine
+// monitors.lua is rewritten by a bar panel and already holds the phantom at
+// its original position, flush against the desktop. Parking once at login is
+// therefore not enough; it was observed drifting back mid-session.
+//
+// So we listen. Events arrive as "name>>payload" lines on .socket2.sock.
+function eventSocketPath() {
+  const runtime = process.env.XDG_RUNTIME_DIR;
+  if (!runtime) return null;
+  const sig = process.env.HYPRLAND_INSTANCE_SIGNATURE;
+  const base = path.join(runtime, 'hypr');
+  if (sig) {
+    const p = path.join(base, sig, '.socket2.sock');
+    return fs.existsSync(p) ? p : null;
+  }
+  // Running from a service, the signature is often not in the environment.
+  // There is normally exactly one instance, so find it rather than give up.
+  let dirs = [];
+  try { dirs = fs.readdirSync(base).filter((d) => fs.existsSync(path.join(base, d, '.socket2.sock'))); }
+  catch { return null; }
+  return dirs.length === 1 ? path.join(base, dirs[0], '.socket2.sock') : null;
+}
+
+// Calls back on events that can move or drop a monitor. Reconnects if the
+// compositor restarts, because a watcher that dies quietly is worse than no
+// watcher at all: the phantom drifts and nothing says so.
+function watchMonitorEvents(onChange, { log = () => {} } = {}) {
+  const net = require('node:net');
+  const INTERESTING = /^(configreloaded|monitoradded|monitoraddedv2|monitorremoved|monitorremovedv2)/;
+  let stop = false;
+  let socket = null;
+
+  const connect = () => {
+    if (stop) return;
+    const p = eventSocketPath();
+    if (!p) { setTimeout(connect, 3000); return; }
+
+    socket = net.createConnection(p);
+    let buffer = '';
+
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (INTERESTING.test(line)) {
+          log(`event: ${line.split('>>')[0]}`);
+          onChange(line.split('>>')[0]);
+        }
+      }
+    });
+    socket.on('error', (err) => { log(`socket error: ${err.message}`); });
+    socket.on('close', () => { if (!stop) setTimeout(connect, 2000); });
+  };
+
+  connect();
+  return () => { stop = true; if (socket) socket.destroy(); };
+}
+
 module.exports = {
-  evalLua, monitors, workspaces, isPresent,
+  evalLua, monitors, workspaces, isPresent, eventSocketPath, watchMonitorEvents,
   disable, enable, park, parkPosition, pinClientToLargestMonitor,
   snapshot, restore, workspaceOn, luaTable
 };

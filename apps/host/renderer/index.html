@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;">
+<title>Clarity Stream</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <h1>Clarity Stream</h1>
+      <p id="hostline" class="muted">reading the machine…</p>
+    </div>
+  </div>
+  <div class="top-right">
+    <span id="servicePill" class="pill">…</span>
+    <button id="refresh" class="ghost" title="Read the machine again">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <section id="verdict" class="verdict">
+    <div class="verdict-text">
+      <h2 id="verdictTitle">Checking…</h2>
+      <p id="verdictSub" class="muted"></p>
+    </div>
+    <button id="applyFixes" class="primary" disabled>Fix what I can</button>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h3 id="findingsHeading">What would stop a stream</h3>
+      <span id="findingCount" class="muted"></span>
+    </div>
+    <ul id="findings" class="findings"><li class="muted pad">reading…</li></ul>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h3>Displays</h3>
+      <span class="muted">Sunshine picks one by index, not by name</span>
+    </div>
+    <ul id="outputs" class="outputs"></ul>
+  </section>
+
+  <section class="card" id="phantomCard">
+    <div class="card-head">
+      <h3>Phantom display</h3>
+      <span id="phantomState" class="muted"></span>
+    </div>
+    <div id="phantomBody" class="pad"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h3>Proof</h3>
+      <span class="muted">measured pixels, not a config file</span>
+    </div>
+    <div class="pad">
+      <p class="muted narrow">
+        Two frames, a moment apart. One frame cannot tell a stream from a still,
+        and a still is what a loading screen looks like.
+      </p>
+      <div class="row">
+        <button id="runVerify" class="secondary">Measure now</button>
+        <span id="verifyState" class="muted"></span>
+      </div>
+      <div id="verifyResult"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h3>Moonlight app list</h3>
+      <span id="appsPath" class="muted"></span>
+    </div>
+    <div class="pad">
+      <ul id="apps" class="apps"></ul>
+      <div class="row">
+        <button id="publishApps" class="secondary">Publish Clarity entries</button>
+        <label class="check"><input type="checkbox" id="pruneStock"> also remove Sunshine's stock tiles</label>
+      </div>
+    </div>
+  </section>
+
+  <section id="notes" class="card hidden">
+    <div class="card-head"><h3>Worth knowing</h3></div>
+    <ul id="noteList" class="findings"></ul>
+  </section>
+</main>
+
+<div id="scrollbar" aria-hidden="true"><div id="scrollthumb"></div></div>
+
+<div id="toast" class="toast hidden"></div>
+
+<dialog id="cmdDialog">
+  <h3 id="cmdTitle">Run this as root</h3>
+  <p id="cmdWhy" class="muted narrow"></p>
+  <pre id="cmdText" class="cmd"></pre>
+  <div class="row end">
+    <button id="cmdCopy" class="secondary">Copy</button>
+    <button id="cmdClose" class="primary">Done</button>
+  </div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
