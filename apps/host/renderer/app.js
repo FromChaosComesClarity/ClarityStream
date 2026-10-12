@@ -60,10 +60,16 @@ function drawHeader(s) {
 
 function drawVerdict(s) {
   const v = $('verdict');
-  const blockers = s.findings.filter((f) => f.severity === 'blocker');
-  const others = s.findings.length - blockers.length;
+  const blockers = s.findings.filter((f) => f.severity === 'blocker' && !f.unknown);
+  const unknowns = s.findings.filter((f) => f.unknown);
+  const others = s.findings.length - blockers.length - unknowns.length;
 
-  if (blockers.length) {
+  if (!blockers.length && unknowns.length) {
+    v.className = 'verdict warn';
+    $('verdictTitle').textContent = 'Cannot say yet';
+    $('verdictSub').textContent =
+      `Nothing is known to be wrong, but ${unknowns.length} check${unknowns.length === 1 ? '' : 's'} could not be made.`;
+  } else if (blockers.length) {
     v.className = 'verdict blocked';
     $('verdictTitle').textContent =
       `${blockers.length} ${blockers.length === 1 ? 'thing stops' : 'things stop'} this streaming`;
@@ -90,7 +96,7 @@ function drawVerdict(s) {
   // The heading should not claim these stop a stream when none of them does.
   $('findingsHeading').textContent = blockers.length
     ? 'What would stop a stream'
-    : (s.findings.length ? 'Worth improving' : 'Checks');
+    : (unknowns.length ? 'What could not be checked' : (s.findings.length ? 'Worth improving' : 'Checks'));
 }
 
 function drawFindings(s) {
@@ -108,7 +114,8 @@ function drawFindings(s) {
   for (const f of s.findings) {
     const li = el('li');
     const head = el('div', 'finding-head');
-    head.append(el('span', `dot ${f.severity}`));
+    // Same reasoning as the CLI: an unknown must not wear a blocker's colour.
+    head.append(el('span', `dot ${f.unknown ? 'unknown' : f.severity}`));
     head.append(el('span', 'finding-title', f.title));
     head.append(el('span', 'finding-id', f.id));
     li.append(head);

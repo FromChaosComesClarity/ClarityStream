@@ -24,13 +24,16 @@ const C = process.stdout.isTTY
   : { r: '', y: '', g: '', d: '', b: '', x: '' };
 
 const MARK = { blocker: `${C.r}x${C.x}`, degraded: `${C.y}!${C.x}`, info: `${C.d}i${C.x}` };
+// An unknown is not a failure, whatever severity the fault would carry if it
+// were confirmed, so it must not wear the failure's mark.
+const UNKNOWN_MARK = `${C.y}?${C.x}`;
 
 function doctor(json) {
   const facts = probe();
   const result = diagnose(facts);
   if (json) {
     process.stdout.write(`${JSON.stringify({ facts, result }, null, 2)}\n`);
-    return result.streamable ? 0 : 1;
+    return result.streamable === true ? 0 : (result.streamable === false ? 1 : 2);
   }
 
   const card = facts.gpus.find((g) => g.connectedCount > 0);
@@ -60,7 +63,7 @@ function doctor(json) {
   console.log(`${C.b}Findings${C.x}`);
   if (!result.findings.length) console.log(`  ${C.g}nothing to report${C.x}`);
   for (const f of result.findings) {
-    console.log(`  ${MARK[f.severity]} ${C.b}${f.title}${C.x}  ${C.d}[${f.id}]${C.x}`);
+    console.log(`  ${f.unknown ? UNKNOWN_MARK : MARK[f.severity]} ${C.b}${f.title}${C.x}  ${C.d}[${f.id}]${C.x}`);
     console.log(`      ${f.evidence}`);
     if (f.detail) console.log(`      ${C.d}${f.detail}${C.x}`);
     if (f.fix && f.fix.kind !== 'none') {
@@ -68,8 +71,11 @@ function doctor(json) {
     }
   }
   console.log('');
-  console.log(result.streamable ? `${C.g}${result.summary}${C.x}` : `${C.r}${result.summary}${C.x}`);
-  return result.streamable ? 0 : 1;
+  const colour = result.streamable === true ? C.g : (result.streamable === false ? C.r : C.y);
+  console.log(`${colour}${result.summary}${C.x}`);
+  // 0 streamable, 1 a real blocker, 2 could not tell. A script that treats
+  // "could not tell" as "broken" would act on nothing.
+  return result.streamable === true ? 0 : (result.streamable === false ? 1 : 2);
 }
 
 function describeFix(fix) {

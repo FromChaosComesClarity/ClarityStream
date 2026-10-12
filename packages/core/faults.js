@@ -305,6 +305,18 @@ const FAULTS = [
     detect: (f) => {
       const forced = /drm\.edid_firmware=/.test(f.phantom.kernelCmdline ?? '');
       if (!forced) return null;                      // phantom-not-armed covers it
+      // A compositor we could not reach is not a compositor that said no.
+      // Run outside the graphical session, hyprctl answers nothing and the
+      // monitor list is null; reporting that as "the phantom is down" is a
+      // false blocker, and a false blocker is worse than no answer.
+      if (f.compositor.monitors === null || f.compositor.monitors === undefined) {
+        return {
+          evidence: 'The compositor could not be asked whether the phantom is up.',
+          detail: 'Run this inside the graphical session to get an answer.',
+          unknown: true,
+          fix: { kind: 'none' }
+        };
+      }
       const outs = enumerateOutputs(f);
       const ph = outs.find((o) => o.isPhantom);
       if (!ph) return null;
@@ -327,11 +339,14 @@ const FAULTS = [
     // cannot see, and switching to it loses windows into the void. Observed:
     // it took workspace 2.
     detect: (f) => {
+      // Without a workspace list there is nothing to judge, and guessing
+      // would invent a fault on a machine that is fine.
+      if (!Array.isArray(f.compositor.workspaces)) return null;
       const outs = enumerateOutputs(f);
       const ph = outs.find((o) => o.isPhantom);
       if (!ph || !ph.monitor) return null;
       const reserved = 11;
-      const held = (f.compositor.workspaces ?? []).filter((w) => w.monitor === ph.connector);
+      const held = f.compositor.workspaces.filter((w) => w.monitor === ph.connector);
       if (!held.length) return null;
       const stranded = held.filter((w) => w.id !== reserved);
       if (!stranded.length) return null;
@@ -351,10 +366,11 @@ const FAULTS = [
     // placed beside the desktop catches the cursor and it disappears onto an
     // invisible screen.
     detect: (f) => {
+      if (!Array.isArray(f.compositor.monitors)) return null;
       const outs = enumerateOutputs(f);
       const ph = outs.find((o) => o.isPhantom);
       if (!ph || !ph.monitor) return null;
-      const others = (f.compositor.monitors ?? []).filter((m) => m.name !== ph.connector);
+      const others = f.compositor.monitors.filter((m) => m.name !== ph.connector);
       if (!others.length) return null;
       const phLeft = ph.monitor.x;
       const touching = others.filter((m) => {

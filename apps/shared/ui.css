@@ -145,6 +145,7 @@ main {
 .dot.blocker { background: var(--bad); }
 .dot.degraded { background: var(--warn); }
 .dot.info { background: var(--muted); }
+.dot.unknown { background: transparent; box-shadow: inset 0 0 0 2px var(--warn); }
 
 .finding-title { font-weight: 600; }
 .finding-id { font-family: var(--mono); font-size: 11px; color: var(--muted); }

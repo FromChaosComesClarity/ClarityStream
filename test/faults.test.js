@@ -155,3 +155,46 @@ test('a detector that throws is reported, not swallowed', () => {
   const r = diagnose(broken);
   assert.ok(r.findings.some((x) => x.detectorFailed), 'a thrown detector should surface');
 });
+
+test('a compositor that cannot be reached is unknown, not a fault', () => {
+  // Run outside the graphical session, hyprctl answers nothing. Reporting
+  // that as "the phantom is down" is a false blocker, and the whole point of
+  // this project is that a confident wrong answer is the expensive failure.
+  const f = healthy();
+  f.compositor.monitors = null;
+  f.compositor.workspaces = null;
+
+  const absent = byId('phantom-armed-but-absent').detect(f);
+  assert.ok(absent, 'it should still say something');
+  assert.strictEqual(absent.unknown, true);
+  assert.strictEqual(absent.fix.kind, 'none');
+  assert.match(absent.evidence, /could not be asked/i);
+
+  assert.strictEqual(byId('phantom-holds-a-user-workspace').detect(f), null);
+  assert.strictEqual(byId('phantom-touches-the-desktop').detect(f), null);
+
+  // And it must not be counted as something that stops a stream.
+  const r = diagnose(f);
+  const ids = r.blockers.map((b) => b.id);
+  assert.ok(!ids.includes('phantom-holds-a-user-workspace'));
+  assert.ok(!ids.includes('phantom-touches-the-desktop'));
+});
+
+test('an unknown check is reported but does not claim a stream would fail', () => {
+  const f = healthy();
+  f.compositor.monitors = null;
+  f.compositor.workspaces = null;
+  const r = diagnose(f);
+  assert.strictEqual(r.blockers.length, 0, 'an unknown is not a blocker');
+  assert.ok(r.unknowns.length >= 1);
+  assert.strictEqual(r.streamable, null, 'neither yes nor no');
+  assert.match(r.summary, /could not be made/);
+});
+
+test('a real blocker still reads as a blocker', () => {
+  const f = healthy();
+  f.sunshine.confRaw = 'capture = wlr\n';
+  const r = diagnose(f);
+  assert.strictEqual(r.streamable, false);
+  assert.ok(r.blockers.some((b) => b.id === 'nvidia-wlr-capture-is-black'));
+});
