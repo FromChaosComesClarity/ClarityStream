@@ -114,12 +114,12 @@ function openCommands(state) {
 function planOpen(state) {
   const cmds = openCommands(state);
   if (!cmds.length) return { ok: false, reason: 'Nothing to open, or an unsupported firewall.' };
-  return {
+  return require('./plan').stamp({
     ok: true,
     description: `Open Sunshine's ports in ${state.kind}`,
     rebootRequired: false,
     steps: cmds.map((argv) => ({ kind: 'run', argv }))
-  };
+  });
 }
 
 module.exports = { detect, openCommands, planOpen, PORTS, ALL_PORT_SPECS };

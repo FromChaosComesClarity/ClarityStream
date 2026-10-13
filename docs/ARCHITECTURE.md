@@ -81,6 +81,15 @@ do, and does only that. There is no shell anywhere in it.
 - Validation runs over the entire plan before any step executes, so a plan
   that is partly illegal does not get to perform the legal half of itself.
 
+Plans carry the version that produced them. Without that, handing a plan to
+an older helper fails with "refusing to run", the same words used when a plan
+asks for something genuinely forbidden, and those are opposite problems: one
+means upgrade, the other means something is wrong. It happened for real, with
+a 0.3.1 checkout writing a firewall plan for an installed 0.2.0 helper that
+had never heard of ufw. The version is only mentioned when a step actually
+fails validation, so a plan from another version whose steps are all allowed
+still runs.
+
 The engine cannot ask it to do anything the allowlist does not already permit.
 That is the point: the unprivileged side builds plans, and a bug there should
 not become a root exploit here. The refusals are tested.

@@ -193,8 +193,34 @@ for (const s of steps) console.log(`  ${describe(s)}`);
 console.log('');
 
 if (problems.length) {
+  // A plan written by a newer Clarity Stream can legitimately contain steps
+  // this helper has never heard of. That is an upgrade, not an attack, and
+  // saying "outside the allowlist" sends the reader looking for the wrong
+  // thing entirely.
+  const mine = (() => {
+    // Its OWN package.json first. Looking at the installed copy first makes a
+    // helper running from a checkout report the installed version, which is
+    // exactly the confusion this message exists to clear up.
+    for (const p of [path.join(__dirname, '..', 'package.json'),
+                     '/opt/clarity-stream/app/package.json']) {
+      try { return JSON.parse(fs.readFileSync(p, 'utf8')).version; } catch { /* next */ }
+    }
+    return null;
+  })();
+  const theirs = plan.producedBy?.version ?? null;
+
+  if (theirs && mine && theirs !== mine) {
+    console.error(`Refused: this plan was written by Clarity Stream ${theirs}, and this helper is ${mine}.`);
+    console.error('The versions have to match. Upgrade, then build the plan again:');
+    console.error('  clarity-stream firewall --open     (or re-run the step that produced it)');
+    process.exit(1);
+  }
+
   console.error('Refused. The plan asks for something outside the allowlist:');
   for (const p of problems) console.error(p);
+  if (!theirs) {
+    console.error('\nThe plan does not say which version wrote it, so it may simply predate this helper.');
+  }
   process.exit(1);
 }
 

@@ -242,7 +242,7 @@ function verifyArmed(connector) {
 // Serialises a plan into the shape the privileged helper accepts. Binary
 // contents travel as base64 because a plan is JSON on its way through sudo.
 function toHelperPlan(plan, description) {
-  return {
+  return require('./plan').stamp({
     description,
     rebootRequired: Boolean(plan.rebootRequired),
     steps: (plan.steps ?? []).map((s) => {
@@ -252,7 +252,7 @@ function toHelperPlan(plan, description) {
         ? { ...rest, base64: contents.toString('base64') }
         : { ...rest, contents };
     })
-  };
+  });
 }
 
 module.exports = {

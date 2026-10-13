@@ -88,3 +88,51 @@ test('an empty or malformed plan is rejected', () => {
   assert.notStrictEqual(runPlan({ steps: [] }).code, 0);
   assert.notStrictEqual(runPlan({}).code, 0);
 });
+
+test('a version gap is explained as a version gap, not as a forbidden step', () => {
+  // The real case: a newer Clarity Stream wrote a plan the installed helper
+  // had never heard of, and "refusing to run" sent the reader looking for a
+  // security problem that was not there.
+  const r = runPlan({
+    producedBy: { name: 'clarity-stream', version: '9.9.9' },
+    steps: [{ kind: 'run', argv: ['ufw', 'allow', '1234/tcp'] }]
+  });
+  assert.notStrictEqual(r.code, 0);
+  assert.match(r.stderr, /written by Clarity Stream 9\.9\.9/);
+  assert.match(r.stderr, /versions have to match/i);
+  assert.doesNotMatch(r.stderr, /outside the allowlist/);
+});
+
+test('a forbidden step is still reported as forbidden when versions agree', () => {
+  const { version } = require('../packages/core/plan');
+  const r = runPlan({
+    producedBy: { name: 'clarity-stream', version: version() },
+    steps: [{ kind: 'run', argv: ['ufw', 'allow', '22/tcp'] }]
+  });
+  assert.notStrictEqual(r.code, 0);
+  assert.match(r.stderr, /outside the allowlist/);
+  assert.match(r.stderr, /22\/tcp/);
+});
+
+test('a plan from another version still runs when every step is allowed', () => {
+  // Leniency where it is safe: the version only gets mentioned when something
+  // actually failed, so an older plan of legal steps is not rejected.
+  const r = runPlan({
+    producedBy: { name: 'clarity-stream', version: '0.0.1' },
+    steps: [{ kind: 'run', argv: ['ufw', 'allow', '47989/tcp'] }]
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+});
+
+test('the firewall allowlist covers exactly Sunshine ports', () => {
+  const { ALL_PORT_SPECS } = require('../packages/core/firewall');
+  for (const s of ALL_PORT_SPECS) {
+    const r = runPlan({ steps: [{ kind: 'run', argv: ['ufw', 'allow', `${s.port}/${s.proto}`] }] });
+    assert.strictEqual(r.code, 0, `${s.port}/${s.proto} should be allowed: ${r.stderr}`);
+  }
+  // The web interface is the administrative surface and stays shut.
+  for (const bad of ['47990/tcp', '22/tcp', '80/tcp', '443/tcp']) {
+    const r = runPlan({ steps: [{ kind: 'run', argv: ['ufw', 'allow', bad] }] });
+    assert.notStrictEqual(r.code, 0, `${bad} must be refused`);
+  }
+});
