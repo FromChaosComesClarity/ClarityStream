@@ -309,10 +309,20 @@ function buildApps(apply, pruneStock = false) {
   // monitor to the client's resolution for the duration of the session.
   const settings = require('../../packages/core/settings').read();
   const streamDisplay = require('../../packages/core/stream-display');
-  let prepScript = null;
-  if (settings.strategy === 'resize') {
-    prepScript = streamDisplay.SCRIPT_PATH;
-    if (apply) streamDisplay.installScript({ cliPath: paths.cliPath() });
+  const conf = require('../../packages/core/sunshine-conf');
+  // Global rather than per-app, so a client picking one of Sunshine's own
+  // tiles is resized too.
+  const prepScript = null;
+  if (settings.strategy === 'resize' && apply) {
+    streamDisplay.installScript({ cliPath: paths.cliPath() });
+    const current = (f.sunshine.confRaw ?? '').match(/^\s*global_prep_cmd\s*=\s*(.+?)\s*$/m)?.[1];
+    if (!streamDisplay.globalPrepHasOurs(current, streamDisplay.SCRIPT_PATH)) {
+      const cur = f.sunshine.confExists ? fs.readFileSync(f.sunshine.confPath, 'utf8') : '';
+      const { text } = conf.apply(cur, {
+        global_prep_cmd: streamDisplay.globalPrepValue(streamDisplay.SCRIPT_PATH)
+      });
+      conf.write(f.sunshine.confPath, text);
+    }
   }
 
   const found = clarityApp.find();
@@ -366,6 +376,26 @@ ipcMain.handle('pairing:state', async () => {
     if (!list.ok) result.reason = list.reason;
   }
   return result;
+});
+
+ipcMain.handle('session:state', async () => {
+  const f = facts();
+  const s = await sunshineApi.sessionState();
+  let appName = null;
+  if (s.ok && s.currentGameId) {
+    // Sunshine reports the running app by id; the name is in apps.json.
+    try {
+      const doc = sunshineApps.read(f.sunshine.appsPath);
+      appName = doc.apps.find((a) => String(a.id ?? '') === String(s.currentGameId))?.name ?? null;
+    } catch { /* the id alone will have to do */ }
+  }
+  return { ...s, appName, haveCredentials: Boolean(readCredentials()) };
+});
+
+ipcMain.handle('session:close', async () => {
+  const creds = readCredentials();
+  if (!creds) return { ok: false, reason: 'No Sunshine credentials saved yet. Set them under Devices.' };
+  return sunshineApi.closeSession(creds);
 });
 
 ipcMain.handle('pairing:saveCredentials', async (_e, { username, password }) => {

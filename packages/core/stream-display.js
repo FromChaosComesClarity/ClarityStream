@@ -166,7 +166,29 @@ function installScript({ cliPath }) {
   return SCRIPT_PATH;
 }
 
+// Sunshine's global_prep_cmd runs around EVERY session, whichever tile the
+// client picked. A per-app prep-cmd only fires for the entries Clarity Stream
+// publishes, so a client choosing Sunshine's own Desktop tile got no resize at
+// all and a 3440x1440 picture on a 1080p screen.
+function globalPrepValue(scriptPath) {
+  return JSON.stringify([{ do: `${scriptPath} start`, undo: `${scriptPath} stop` }]);
+}
+
+// Is ours already the configured one? Compared by the script path rather than
+// the whole string, so a hand-edited elevated flag or an extra entry is not
+// stamped on.
+function globalPrepHasOurs(value, scriptPath) {
+  if (!value) return false;
+  try {
+    const list = JSON.parse(value);
+    return Array.isArray(list) && list.some((e) => String(e?.do ?? '').includes(scriptPath));
+  } catch {
+    return String(value).includes(scriptPath);
+  }
+}
+
 module.exports = {
   parseModes, chooseMode, readSaved, saveState, clearState, strandedResize,
-  installScript, scriptContents, STATE_FILE, SCRIPT_PATH
+  installScript, scriptContents, globalPrepValue, globalPrepHasOurs,
+  STATE_FILE, SCRIPT_PATH
 };

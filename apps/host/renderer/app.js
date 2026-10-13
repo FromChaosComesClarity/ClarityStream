@@ -155,6 +155,7 @@ function describeFix(fix) {
     case 'park-phantom': return 'park the phantom display';
     case 'install-park-service': return 'install the login service that parks it';
     case 'open-ports': return `open ${fix.ports.map((p) => `${p.port}/${p.proto}`).join(', ')} in ${fix.firewall}`;
+    case 'wire-resize': return 'press Publish below, which also sets the resize step';
     case 'modprobe-conf': return `write "${fix.line}" to ${fix.path}`;
     case 'use-phantom-instead': return 'target a forced connector, not a headless output';
     default: return fix.kind;
@@ -306,6 +307,57 @@ function drawPhantom(s) {
   }
   body.append(row);
 }
+
+/* --------------------------------------------------------------- session */
+
+// Closing the client's window does not end the session. Sunshine keeps it
+// open and the host stays busy, refusing the next connection until its own
+// timeout gives up, which is long enough to look like a fault. So the state
+// is shown without being asked for, and there is a button.
+async function drawSession() {
+  let s;
+  try { s = await window.cs.sessionState(); }
+  catch { return; }
+
+  const card = $('sessionCard');
+  const dot = $('sessionDot');
+  const stop = $('stopSession');
+
+  if (!s.ok) {
+    card.classList.remove('live');
+    dot.className = 'beacon unknown';
+    $('sessionTitle').textContent = 'Cannot tell whether anything is streaming';
+    $('sessionSub').textContent = s.reason ?? 'Sunshine did not answer.';
+    stop.classList.add('hidden');
+    return;
+  }
+
+  if (!s.busy) {
+    card.classList.remove('live');
+    dot.className = 'beacon off';
+    $('sessionTitle').textContent = 'Nothing is streaming';
+    $('sessionSub').textContent = 'The host is free for a client to connect.';
+    stop.classList.add('hidden');
+    return;
+  }
+
+  card.classList.add('live');
+  dot.className = 'beacon on';
+  $('sessionTitle').textContent = s.appName ? `Streaming ${s.appName}` : 'A session is running';
+  $('sessionSub').textContent = s.haveCredentials
+    ? 'Closing the window on the client does not end this. Stopping it here does.'
+    : 'Stopping it needs Sunshine\u2019s credentials; set them under Devices below.';
+  stop.classList.toggle('hidden', !s.haveCredentials);
+}
+
+$('stopSession').addEventListener('click', () => withBusy(async () => {
+  const r = await window.cs.closeSession();
+  toast(r.ok ? 'Session stopped.' : (r.reason ?? 'Could not stop it'), !r.ok);
+  await drawSession();
+  // Ending a session runs the undo that puts the display back, so the rest of
+  // the window is now out of date.
+  await refresh();
+}, 'Stopping the session'));
 
 /* --------------------------------------------------------------- devices */
 
@@ -506,7 +558,12 @@ function draw(s) {
   // Asks Sunshine over the network, so it is not blocked on by the rest of
   // the window drawing.
   drawPairing().catch(() => { /* its own panel reports its own trouble */ });
+  drawSession().catch(() => { /* likewise */ });
 }
+
+// A session can start or end without anybody touching this window, and a
+// stuck one is exactly what somebody comes here to find.
+setInterval(() => { drawSession().catch(() => {}); }, 5000);
 
 /* --------------------------------------------------------------- actions */
 

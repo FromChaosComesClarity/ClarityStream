@@ -93,3 +93,14 @@
 .devices li:last-child { border-bottom: none; }
 .device-name { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 .device-id { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+
+/* --------------------------------------------------------------- session */
+
+.session-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.session-main { flex: 1; min-width: 0; }
+.session.live { border-color: #8bd49c55; }
+
+.beacon { width: 9px; height: 9px; border-radius: 50%; flex: none; background: #3a4152; }
+.beacon.on { background: var(--ok); box-shadow: 0 0 0 4px #8bd49c22; }
+.beacon.off { background: #3a4152; }
+.beacon.unknown { background: var(--warn); }

@@ -61,3 +61,10 @@
   padding: 18px 0 14px; margin: 6px 0;
   background: #0d0f15; border: 1px solid var(--line); border-radius: 10px;
 }
+
+/* A session already running, and the way out of it. */
+.stoprow {
+  margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
+  background: #e0af6810; border: 1px solid #e0af6844;
+}
+.stoprow .muted { flex: 1; min-width: 0; }

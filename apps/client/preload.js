@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('cs', {
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
   startPairing: (opts) => ipcRenderer.invoke('pair:start', opts),
   launch: (opts) => ipcRenderer.invoke('launch', opts),
+  quit: (opts) => ipcRenderer.invoke('quit', opts),
   openMoonlight: () => ipcRenderer.invoke('open:moonlight'),
   openExternal: (url) => ipcRenderer.invoke('open:external', url)
 });

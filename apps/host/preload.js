@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('cs', {
   verify: (opts) => ipcRenderer.invoke('verify:run', opts),
   previewApps: () => ipcRenderer.invoke('apps:preview'),
   applyApps: (opts) => ipcRenderer.invoke('apps:apply', opts),
+  sessionState: () => ipcRenderer.invoke('session:state'),
+  closeSession: () => ipcRenderer.invoke('session:close'),
   pairingState: () => ipcRenderer.invoke('pairing:state'),
   saveCredentials: (c) => ipcRenderer.invoke('pairing:saveCredentials', c),
   forgetCredentials: () => ipcRenderer.invoke('pairing:forgetCredentials'),

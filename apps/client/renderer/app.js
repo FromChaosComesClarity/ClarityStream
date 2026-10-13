@@ -100,6 +100,24 @@ function drawApps() {
   card.classList.remove('hidden');
   $('playHost').textContent = `${host.name} · ${host.address}`;
 
+  // A session already running is the thing most likely to be in the way, and
+  // closing the Moonlight window does not end it: the host stays busy and
+  // refuses the next connection until its own timeout gives up.
+  const stopRow = $('stopRow');
+  stopRow.replaceChildren();
+  stopRow.classList.toggle('hidden', !host.busy);
+  if (host.busy) {
+    stopRow.append(el('span', 'muted',
+      'A session is already running on this host. Closing the window does not end it.'));
+    const stop = el('button', 'danger', 'Stop the session');
+    stop.addEventListener('click', async () => {
+      await window.cs.quit({ address: host.address });
+      toast('Asked the host to stop the session.');
+      setTimeout(() => refresh().catch(() => {}), 2500);
+    });
+    stopRow.append(stop);
+  }
+
   const list = $('apps');
   list.replaceChildren();
 
