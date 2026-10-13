@@ -71,6 +71,22 @@ enables the packaged unit when it finds one, and removes any unit left in
 `~/.config/systemd/user` by a development checkout, since a user unit shadows
 the packaged one and would keep pointing at a directory that may be gone.
 
+## Releasing
+
+Build once, publish everything from that build, and never replace an asset
+that is already published.
+
+`npm run pkg` writes a `SHA256SUMS` beside the packages, and the installer
+refuses to install anything that does not match it. That only means something
+if the checksums and the packages come from the same build: a rebuild produces
+different bytes even when nothing changed, because tar records timestamps.
+
+Replacing an asset under a name that already exists does not work reliably
+either. GitHub keeps serving the old bytes from its cache for a while, so a
+`--clobber` upload looks successful, the API reports the new size, and
+downloads still arrive as the old file. Measured: two of three assets were
+still stale minutes after a successful replacement. Cut a new tag instead.
+
 ## Version
 
 `pkgver` comes from `package.json` at build time rather than being kept in

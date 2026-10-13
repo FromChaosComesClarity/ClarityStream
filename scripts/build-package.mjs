@@ -76,6 +76,13 @@ try {
 }
 
 const built = fs.readdirSync(build).filter((f) => f.endsWith('.pkg.tar.zst'));
+
+// Checksums ship with the release so the installer can verify what it
+// downloaded before handing it to pacman. An installer that pipes an
+// unverified package into a root command is not worth having.
+const sums = execFileSync('sha256sum', built, { cwd: build, encoding: 'utf8' });
+fs.writeFileSync(path.join(build, 'SHA256SUMS'), sums);
+
 console.log('\nBuilt:');
 for (const f of built) {
   const size = (fs.statSync(path.join(build, f)).size / (1024 * 1024)).toFixed(1);
@@ -83,6 +90,7 @@ for (const f of built) {
 }
 const host = built.filter((f) => /common|^clarity-stream-0|clarity-stream-\d/.test(f) && !/client/.test(f));
 const client = built.filter((f) => /common|client/.test(f));
+console.log(`  SHA256SUMS  ${built.length} entries`);
 console.log('\nInstall the host with:');
 console.log(`  sudo pacman -U ${host.map((f) => `dist/pkg/${f}`).join(' ')}`);
 console.log('Install the client with:');

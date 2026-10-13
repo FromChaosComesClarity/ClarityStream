@@ -156,32 +156,54 @@ Both are faces over the same engine the CLI uses.
 
 ## Installing it
 
-Grab the three packages from the
-[latest release](https://github.com/FromChaosComesClarity/ClarityStream/releases/latest)
-and install the ones that machine needs. Arch-based distributions only.
+One line, on each machine. Arch-based distributions only.
 
 **On the machine whose games you want to stream:**
 
 ```sh
-sudo pacman -U clarity-stream-common-*.pkg.tar.zst clarity-stream-0.*.pkg.tar.zst
-sudo pacman -S sunshine          # the streaming host itself
+curl -fsSL https://raw.githubusercontent.com/FromChaosComesClarity/ClarityStream/main/install.sh | sh -s -- host
 ```
 
 **On a machine you want to play from:**
 
 ```sh
-sudo pacman -U clarity-stream-common-*.pkg.tar.zst clarity-stream-client-*.pkg.tar.zst
-sudo pacman -S moonlight-qt
+curl -fsSL https://raw.githubusercontent.com/FromChaosComesClarity/ClarityStream/main/install.sh | sh -s -- client
 ```
 
-A machine that is both takes all three. `clarity-stream-common` carries the
-engine and a bundled Electron, which is why it is the big one and why the
-other two are a few kilobytes; a machine that is host and client holds one
-copy of the runtime, not two.
+**On a machine that is both:** `sh -s -- both`.
 
-Nothing else is needed. No system Node, no system Electron, no matching
-versions to keep up with. Installing changes no configuration, starts no
-service and touches no display: everything happens when you ask for it.
+It finds the latest release, downloads only the packages that machine needs,
+**checks them against the `SHA256SUMS` published with the release**, and hands
+them to pacman. It will not install a file whose checksum does not match, and
+it will not go on if a release has no checksums at all. It also installs
+`sunshine` or `moonlight-qt` if they are missing.
+
+It asks before doing anything. Add `--yes` to skip that, `--tag v0.3.1` to
+pin a release, and `--local` to install from `dist/pkg` in a clone.
+
+If you would rather read it before running it, which is the correct instinct
+for anything piped into a shell, it is [install.sh](install.sh) in this
+repository, and you can equally clone and run `./install.sh host`.
+
+Nothing is enabled, started or configured by installing. That is the
+application's job, and it asks first.
+
+### What the three packages are
+
+`clarity-stream-common` carries the engine and a bundled Electron, which is
+why it is the big one and the other two are a few kilobytes. A machine that is
+host and client holds one copy of the runtime, not two. Nothing else is
+required: no system Node, no system Electron, no versions to keep in step.
+
+### Doing it by hand
+
+Grab the packages from the
+[latest release](https://github.com/FromChaosComesClarity/ClarityStream/releases/latest):
+
+```sh
+sudo pacman -U clarity-stream-common-*.pkg.tar.zst clarity-stream-0.*.pkg.tar.zst      # host
+sudo pacman -U clarity-stream-common-*.pkg.tar.zst clarity-stream-client-*.pkg.tar.zst # client
+```
 
 ### Setting up the host
 
