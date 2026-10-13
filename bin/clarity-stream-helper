@@ -52,12 +52,25 @@ const WRITABLE = [
   /^\/etc\/default\/grub\.d\/clarity-stream\.cfg$/
 ];
 
+// Sunshine's documented ports, and only those. 47990 is the web interface and
+// is deliberately absent: it is the administrative surface, Moonlight never
+// touches it, and Clarity Stream reaches it over loopback.
+const STREAM_PORTS = [
+  [47984, 'tcp'], [47989, 'tcp'], [48010, 'tcp'],
+  [47998, 'udp'], [47999, 'udp'], [48000, 'udp'], [48002, 'udp'], [48010, 'udp']
+];
+
 // Commands this helper may run, matched on the whole argv, not a prefix.
+// The firewall entries are enumerated rather than pattern-matched, so there
+// is no argument a caller can supply that opens a port not on this list.
 const RUNNABLE = [
   ['mkinitcpio', '-P'],
   ['limine-update'],
   ['bootctl', 'update'],
-  ['grub-mkconfig', '-o', '/boot/grub/grub.cfg']
+  ['grub-mkconfig', '-o', '/boot/grub/grub.cfg'],
+  ...STREAM_PORTS.map(([p, proto]) => ['ufw', 'allow', `${p}/${proto}`]),
+  ...STREAM_PORTS.map(([p, proto]) => ['firewall-cmd', '--permanent', `--add-port=${p}/${proto}`]),
+  ['firewall-cmd', '--reload']
 ];
 
 // setcap is allowed only onto a real binary, and only with these capabilities.

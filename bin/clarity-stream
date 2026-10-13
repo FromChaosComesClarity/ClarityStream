@@ -88,6 +88,7 @@ function describeFix(fix) {
     case 'arm-phantom': return `force a connector on ${fix.card}: ${fix.candidates.join(' or ')}`;
     case 'park-phantom': return `clarity-stream phantom --park`;
     case 'install-park-service': return `clarity-stream phantom --install-service`;
+    case 'open-ports': return `open ${fix.ports.map((p) => `${p.port}/${p.proto}`).join(', ')} in ${fix.firewall}`;
     case 'modprobe-conf': return `write "${fix.line}" to ${fix.path}`;
     case 'use-phantom-instead': return 'target a forced connector rather than a headless output';
     default: return fix.kind;
@@ -290,6 +291,47 @@ function appsCmd(rest) {
     const r = restartUserService(facts.sunshine.unitName);
     console.log(`${facts.sunshine.unitName}  ${r.ok ? C.g + r.detail + C.x : C.r + r.detail + C.x}`);
   }
+  return 0;
+}
+
+function firewallCmd(rest) {
+  const firewall = require('../packages/core/firewall');
+  const paths = require('../packages/core/paths');
+  const st = firewall.detect();
+
+  console.log(`${C.b}Clarity Stream — reachability${C.x}\n`);
+  if (!st.present) {
+    console.log(`  ${C.g}No firewall is running, so nothing here is blocking the stream ports.${C.x}`);
+    return 0;
+  }
+  console.log(`  firewall   ${st.kind}${st.policy ? `, default input ${st.policy}` : ''}`);
+  if (st.unknown) {
+    console.log(`  ${C.y}Its rules could not be read from here, so this cannot say either way.${C.x}`);
+    console.log(`  ${C.d}Sunshine needs TCP 47984, 47989, 48010 and UDP 47998-48000, 48002, 48010.${C.x}`);
+    return 2;
+  }
+  if (!st.missing.length) {
+    console.log(`  ${C.g}All of Sunshine's ports are already allowed.${C.x}`);
+    return 0;
+  }
+  console.log(`  missing    ${st.missing.map((m) => `${m.port}/${m.proto}`).join(', ')}`);
+  console.log(`\n  ${C.d}Every check on this machine passes regardless, because they all go over${C.x}`);
+  console.log(`  ${C.d}loopback. From another machine the host simply does not answer.${C.x}\n`);
+
+  if (!rest.includes('--open')) {
+    console.log(`${C.d}Run with --open to write the plan that fixes it.${C.x}`);
+    return 1;
+  }
+
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const dir = pathMod3.join(os.homedir(), '.cache', 'clarity-stream');
+  fs.mkdirSync(dir, { recursive: true });
+  const planFile = pathMod3.join(dir, 'firewall-plan.json');
+  fs.writeFileSync(planFile, JSON.stringify(firewall.planOpen(st), null, 2));
+  console.log(`${C.b}Plan written to${C.x} ${planFile}`);
+  console.log(`${C.b}Apply it:${C.x}`);
+  console.log(`  ${paths.helperCommand(planFile)}`);
   return 0;
 }
 
@@ -555,6 +597,7 @@ switch (cmd) {
   case 'boot': code = bootCmd(); break;
   case 'fix': code = fixCmd(rest); break;
   case 'apps': code = appsCmd(rest); break;
+  case 'firewall': code = firewallCmd(rest); break;
   case 'verify': code = verifyCmd(rest); break;
   case 'measure': code = measureCmd(rest); break;
   case 'phantom': code = phantomCmd(rest); break;
@@ -566,6 +609,7 @@ switch (cmd) {
     console.log('  fix [--apply]        apply what can be fixed without root');
   console.log('                       [--output NAME] [--no-service]');
   console.log('  apps [--apply]       publish the Moonlight app list [--prune-stock]');
+  console.log('  firewall [--open]    can other machines reach this host at all');
   console.log('  verify [output]      measure real pixels, prove the capture is not black');
   console.log('  measure <image>      report whether a captured frame is black');
   console.log('  phantom [WxH[@Hz]]   plan the phantom stream display');

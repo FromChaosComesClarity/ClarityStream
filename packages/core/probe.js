@@ -281,6 +281,7 @@ function probe() {
     nvidia: probeNvidia(),
     compositor,
     sunshine: probeSunshine(),
+    firewall: require('./firewall').detect(),
     moonlight: probeMoonlight(),
     phantom: probePhantomSupport()
   };

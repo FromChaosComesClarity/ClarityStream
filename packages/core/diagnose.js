@@ -14,6 +14,7 @@ const ORDER = [
   'nvidia-wlr-capture-is-black',
   'capture-aimed-at-idle-card',
   'headless-output-cannot-be-captured',
+  'ports-blocked-by-firewall',
   'phantom-armed-but-absent',
   'output-not-pinned',
   'encoder-not-pinned-nvenc',

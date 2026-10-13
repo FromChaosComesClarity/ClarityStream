@@ -124,6 +124,22 @@ function drawFindings(s) {
     body.append(el('p', 'evidence', f.evidence));
     if (f.detail) body.append(el('p', 'muted', f.detail));
     if (f.fix && f.fix.kind !== 'none') body.append(el('p', 'fix', describeFix(f.fix)));
+
+    // The firewall is the one blocker that cannot be fixed without root and
+    // cannot be noticed from this machine, so it gets its own way out.
+    if (f.fix?.kind === 'open-ports') {
+      const open = el('button', 'secondary', 'Show the command to open them');
+      open.style.marginTop = '8px';
+      open.addEventListener('click', () => withBusy(async () => {
+        const plan = await window.cs.planFirewall();
+        if (!plan.ok) { toast(plan.reason, true); return; }
+        showCommand('Open Sunshine\u2019s ports',
+          'This adds a rule per port and nothing else. The helper refuses any port that is not ' +
+          'one of Sunshine\u2019s, so it cannot be talked into opening anything else.',
+          plan.command);
+      }, 'Preparing'));
+      body.append(open);
+    }
     li.append(body);
     list.append(li);
   }
@@ -138,6 +154,7 @@ function describeFix(fix) {
     case 'arm-phantom': return `force a connector on ${fix.card}: ${fix.candidates.join(' or ')}`;
     case 'park-phantom': return 'park the phantom display';
     case 'install-park-service': return 'install the login service that parks it';
+    case 'open-ports': return `open ${fix.ports.map((p) => `${p.port}/${p.proto}`).join(', ')} in ${fix.firewall}`;
     case 'modprobe-conf': return `write "${fix.line}" to ${fix.path}`;
     case 'use-phantom-instead': return 'target a forced connector, not a headless output';
     default: return fix.kind;

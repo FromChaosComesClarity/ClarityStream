@@ -12,6 +12,7 @@
 //      assuming the good case.
 
 const { enumerateOutputs, defaultOutput } = require('./outputs');
+const firewall = require('./firewall');
 
 const SEVERITY = { BLOCKER: 'blocker', DEGRADED: 'degraded', INFO: 'info' };
 
@@ -236,6 +237,44 @@ const FAULTS = [
       return {
         evidence: `${f.sunshine.unitName}: enabled=${f.sunshine.unitEnabled}, active=${f.sunshine.unitActive}.`,
         fix: { kind: 'user-service', unit: f.sunshine.unitName, enable: true }
+      };
+    }
+  },
+
+  {
+    id: 'ports-blocked-by-firewall',
+    title: 'Nothing on the network can reach this host',
+    severity: SEVERITY.BLOCKER,
+    // The cruellest fault in the set, because the host looks perfectly
+    // healthy from the host. Sunshine binds 0.0.0.0 and says nothing more
+    // about it, so with a default-deny firewall every local check passes, the
+    // client just says "not answering", and the pairing PIN never arrives
+    // because the pairing request never arrives. Nothing anywhere mentions a
+    // firewall. Measured on this machine: ufw active, policy DROP, and not
+    // one of Sunshine's ports allowed.
+    detect: (f) => {
+      if (!f.sunshine.installed) return null;
+      const fw = f.firewall;
+      if (!fw || !fw.present) return null;
+      if (fw.unknown) {
+        return {
+          title: `Could not tell whether ${fw.kind} is blocking the stream ports`,
+          evidence: `${fw.kind} is running, and its rules could not be read from here.`,
+          detail: 'Sunshine needs TCP 47984, 47989, 48010 and UDP 47998-48000, 48002, 48010 ' +
+                  'reachable from your other machines.',
+          unknown: true,
+          fix: { kind: 'none' }
+        };
+      }
+      if (!fw.blocking || !fw.missing?.length) return null;
+      return {
+        evidence: `${fw.kind} is active with a default ${fw.policy ?? 'deny'} policy and no rule for ` +
+                  `${fw.missing.length} of Sunshine's ports.`,
+        detail: 'Every check on this machine passes, because they all talk to it over loopback. ' +
+                'From any other machine the host simply does not answer, and a client blames the ' +
+                'pairing rather than the firewall. Missing: ' +
+                fw.missing.map((m) => `${m.port}/${m.proto}`).join(', ') + '.',
+        fix: { kind: 'open-ports', firewall: fw.kind, ports: fw.missing }
       };
     }
   },

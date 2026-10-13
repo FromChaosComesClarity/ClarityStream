@@ -214,6 +214,21 @@ Afterwards press **Keep it parked**, which installs a small user service. That
 matters more than it sounds: parking is runtime state, and anything that makes
 your compositor re-read its config throws it away.
 
+### If a client says the host is not answering
+
+Almost always a firewall. Sunshine binds every interface and says nothing more
+about it, so a host behind a default-deny firewall passes every check run on
+the host itself and is invisible from everywhere else. The client reports the
+host as not answering, pairing never starts, and nothing mentions a firewall.
+
+`clarity-stream firewall` says whether that is what is happening, and
+`--open` writes a plan that opens exactly the ports Sunshine needs:
+TCP 47984, 47989 and 48010, UDP 47998 to 48000, 48002 and 48010. Port 47990,
+the web interface, is deliberately left closed: it is the administrative
+surface and Moonlight never touches it.
+
+The host window offers the same thing as a button on the finding.
+
 ### Pairing a client
 
 Open **Clarity Stream Client**. It finds hosts on the network by itself. Press

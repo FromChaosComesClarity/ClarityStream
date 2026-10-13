@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('cs', {
   applyFixes: (opts) => ipcRenderer.invoke('fix:apply', opts),
   restartService: () => ipcRenderer.invoke('service:restart'),
   planPhantom: (opts) => ipcRenderer.invoke('phantom:plan', opts),
+  planFirewall: () => ipcRenderer.invoke('firewall:plan'),
   parkPhantom: () => ipcRenderer.invoke('phantom:park'),
   unparkPhantom: () => ipcRenderer.invoke('phantom:unpark'),
   installPhantomService: () => ipcRenderer.invoke('phantom:installService'),

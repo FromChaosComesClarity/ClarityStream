@@ -235,6 +235,19 @@ ipcMain.handle('phantom:plan', (_e, { width, height, refresh, connector } = {}) 
   };
 });
 
+ipcMain.handle('firewall:plan', () => {
+  const firewall = require('../../packages/core/firewall');
+  const st = firewall.detect();
+  const plan = firewall.planOpen(st);
+  if (!plan.ok) return plan;
+  const os = require('node:os');
+  const dir = path.join(os.homedir(), '.cache', 'clarity-stream');
+  fs.mkdirSync(dir, { recursive: true });
+  const planFile = path.join(dir, 'firewall-plan.json');
+  fs.writeFileSync(planFile, JSON.stringify(plan, null, 2));
+  return { ...plan, planFile, command: paths.helperCommand(planFile) };
+});
+
 ipcMain.handle('phantom:park', () => {
   const f = facts({ fresh: true });
   const ph = enumerateOutputs(f).find((o) => o.isPhantom);

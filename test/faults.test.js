@@ -209,3 +209,38 @@ test('an unknown does not keep a headline that asserts the fault', () => {
   assert.doesNotMatch(finding.title, /does not have it up/i);
   assert.match(finding.title, /could not check/i);
 });
+
+test('a default-deny firewall with no stream ports is a blocker', () => {
+  const f = healthy();
+  f.firewall = {
+    present: true, kind: 'ufw', active: true, policy: 'DROP', blocking: true, unknown: false,
+    missing: [{ port: 47989, proto: 'tcp' }, { port: 48010, proto: 'udp' }]
+  };
+  const hit = byId('ports-blocked-by-firewall').detect(f);
+  assert.ok(hit, 'a host nothing can reach is a blocker');
+  assert.strictEqual(hit.fix.kind, 'open-ports');
+  assert.match(hit.detail, /loopback/);
+  assert.strictEqual(diagnose(f).streamable, false);
+});
+
+test('a firewall with the ports already open says nothing', () => {
+  const f = healthy();
+  f.firewall = { present: true, kind: 'ufw', blocking: true, unknown: false, missing: [] };
+  assert.strictEqual(byId('ports-blocked-by-firewall').detect(f), null);
+});
+
+test('no firewall at all says nothing', () => {
+  const f = healthy();
+  f.firewall = { present: false };
+  assert.strictEqual(byId('ports-blocked-by-firewall').detect(f), null);
+});
+
+test('a firewall whose rules cannot be read is unknown, not a blocker', () => {
+  const f = healthy();
+  f.firewall = { present: true, kind: 'nftables', active: true, unknown: true, missing: [] };
+  const hit = byId('ports-blocked-by-firewall').detect(f);
+  assert.ok(hit);
+  assert.strictEqual(hit.unknown, true);
+  assert.match(hit.title, /could not tell/i);
+  assert.strictEqual(diagnose(f).streamable, null);
+});

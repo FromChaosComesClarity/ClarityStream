@@ -22,6 +22,7 @@ The two rules are Clarity's two rules:
 | id | severity | what it catches |
 | --- | --- | --- |
 | `sunshine-missing` | blocker | No Sunshine binary on PATH. |
+| `ports-blocked-by-firewall` | blocker | A default-deny firewall with no rule for Sunshine's ports. Every local check still passes, because they all go over loopback; from any other machine the host simply does not answer. |
 | `nvidia-wlr-capture-is-black` | blocker | NVIDIA plus Wayland plus a capture mode that is not `kms`. The stream will connect and show solid black. |
 | `kms-missing-capability` | blocker | `capture = kms` without `cap_sys_admin` on the resolved binary. Fails at init. |
 | `capture-aimed-at-idle-card` | blocker | Two or more DRM cards and `adapter_name` not pinned to the one driving a display. |

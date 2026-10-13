@@ -55,7 +55,7 @@ function drawHosts() {
     main.append(el('div', 'host-name', h.name));
     const bits = [h.address];
     if (h.version) bits.push(`Sunshine ${h.version.split('.').slice(0, 3).join('.')}`);
-    if (!h.reachable) bits.push('not answering');
+    if (!h.reachable) bits.push('not answering, so it cannot be paired or played');
     else if (h.busy) bits.push('a session is already running');
     main.append(el('div', 'host-sub', bits.join(' · ')));
     li.append(main);
@@ -64,6 +64,13 @@ function drawHosts() {
     if (h.discovered) li.append(el('span', 'tag', 'on the network'));
 
     const action = el('button', h.paired ? 'secondary' : 'primary', h.paired ? 'Choose' : 'Pair');
+    // Pairing an unreachable host cannot work: the request never arrives, the
+    // PIN never reaches it, and the failure reads as a pairing problem when
+    // it is a reachability one. Usually a firewall on the host.
+    if (!h.reachable) {
+      action.disabled = true;
+      action.title = 'This host is not answering, so pairing cannot reach it.';
+    }
     action.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (h.paired) { select(h.name); return; }
