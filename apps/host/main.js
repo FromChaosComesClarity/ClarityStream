@@ -9,8 +9,9 @@
 // The renderer gets no node integration. Everything crosses through preload
 // as a named channel, which keeps the privileged surface small and explicit.
 
-const { app, BrowserWindow, ipcMain, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, clipboard, safeStorage } = require('electron');
 const path = require('node:path');
+const fs = require('node:fs');
 
 const { probe } = require('../../packages/core/probe');
 const { diagnose } = require('../../packages/core/diagnose');
@@ -24,6 +25,7 @@ const sunshineApps = require('../../packages/core/sunshine-apps');
 const phantomScript = require('../../packages/core/phantom-script');
 const clarityApp = require('../../packages/core/clarity-app');
 const paths = require('../../packages/core/paths');
+const sunshineApi = require('../../packages/core/sunshine-api');
 
 // Set explicitly, not inherited. Launched from a checkout as `electron .`,
 // Electron reads the app name out of package.json and the Wayland class comes
@@ -34,6 +36,57 @@ const paths = require('../../packages/core/paths');
 // name clarity-stream then match nothing.
 app.setName('clarity-stream');
 app.setDesktopName('clarity-stream.desktop');
+
+// ------------------------------------------------------- credentials
+//
+// Accepting a pairing PIN means calling Sunshine's own API, which wants the
+// web interface's username and password. They are kept through the OS keyring
+// when there is one. Where there is not, Electron's safeStorage falls back to
+// obfuscation rather than encryption, and the UI is told so rather than
+// implying a safety that is not there.
+
+const CREDS_FILE = () => path.join(app.getPath('userData'), 'sunshine-credentials.json');
+
+function credentialsState() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CREDS_FILE(), 'utf8'));
+    return { stored: true, username: raw.username ?? null, encrypted: Boolean(raw.enc) };
+  } catch {
+    return { stored: false, username: null, encrypted: false };
+  }
+}
+
+function readCredentials() {
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(CREDS_FILE(), 'utf8')); } catch { return null; }
+  if (raw.enc) {
+    try {
+      return { username: raw.username, password: safeStorage.decryptString(Buffer.from(raw.enc, 'base64')) };
+    } catch {
+      // A keyring that has moved on cannot be recovered from, and silently
+      // treating it as "no credentials" is the honest outcome.
+      return null;
+    }
+  }
+  return raw.username ? { username: raw.username, password: raw.password ?? '' } : null;
+}
+
+function writeCredentials({ username, password }) {
+  const dir = path.dirname(CREDS_FILE());
+  fs.mkdirSync(dir, { recursive: true });
+  const usable = safeStorage.isEncryptionAvailable();
+  const payload = usable
+    ? { username, enc: safeStorage.encryptString(password).toString('base64') }
+    : { username, password };
+  // 0600 either way: encrypted at rest is better, unreadable by other users
+  // is the minimum.
+  fs.writeFileSync(CREDS_FILE(), `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+  return { encrypted: usable };
+}
+
+function forgetCredentials() {
+  try { fs.unlinkSync(CREDS_FILE()); return true; } catch { return false; }
+}
 
 const DEV = process.argv.includes('--dev');
 let win = null;
@@ -166,7 +219,6 @@ ipcMain.handle('phantom:plan', (_e, { width, height, refresh, connector } = {}) 
   const f = facts({ fresh: true });
   const plan = phantom.planArm(f, { width, height, refresh, connector });
   if (!plan.ok) return plan;
-  const fs = require('node:fs');
   const os = require('node:os');
   const dir = path.join(os.homedir(), '.cache', 'clarity-stream');
   fs.mkdirSync(dir, { recursive: true });
@@ -273,6 +325,57 @@ function buildApps(apply, pruneStock = false) {
   cache.at = 0;
   return { ok: true, dryRun: false, changes, stock, pruned, clarity: found, restarted, path: f.sunshine.appsPath };
 }
+
+// ------------------------------------------------------------ pairing
+
+ipcMain.handle('pairing:state', async () => {
+  const state = credentialsState();
+  const f = facts();
+  const result = {
+    ...state,
+    encryptionAvailable: safeStorage.isEncryptionAvailable(),
+    sunshineRunning: f.sunshine.unitActive === 'active',
+    // Sunshine writes a username into its own state the first time any
+    // credentials are set. Without that, there is nothing to type here yet.
+    sunshineHasCredentials: (() => {
+      try {
+        const p = path.join(path.dirname(f.sunshine.confPath), 'sunshine_state.json');
+        return Boolean(JSON.parse(fs.readFileSync(p, 'utf8')).username);
+      } catch { return false; }
+    })(),
+    webUrl: `https://localhost:${sunshineApi.PORT}`,
+    clients: []
+  };
+  const creds = readCredentials();
+  if (creds) {
+    const list = await sunshineApi.listClients(creds);
+    result.clients = list.clients;
+    result.credentialsWork = list.ok;
+    if (!list.ok) result.reason = list.reason;
+  }
+  return result;
+});
+
+ipcMain.handle('pairing:saveCredentials', async (_e, { username, password }) => {
+  const check = await sunshineApi.checkCredentials({ username, password });
+  if (!check.ok) return check;              // never store something that does not work
+  const { encrypted } = writeCredentials({ username, password });
+  return { ok: true, encrypted };
+});
+
+ipcMain.handle('pairing:forgetCredentials', () => ({ ok: forgetCredentials() }));
+
+ipcMain.handle('pairing:submitPin', async (_e, { pin, deviceName }) => {
+  const creds = readCredentials();
+  if (!creds) return { ok: false, reason: 'No Sunshine credentials saved yet.' };
+  return sunshineApi.submitPin(pin, deviceName, creds);
+});
+
+ipcMain.handle('pairing:unpair', async (_e, { uuid }) => {
+  const creds = readCredentials();
+  if (!creds) return { ok: false, reason: 'No Sunshine credentials saved yet.' };
+  return sunshineApi.unpairClient(uuid, creds);
+});
 
 ipcMain.handle('clipboard:write', (_e, text) => { clipboard.writeText(String(text ?? '')); return true; });
 ipcMain.handle('open:external', (_e, url) => {

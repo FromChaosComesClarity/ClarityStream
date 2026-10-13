@@ -65,3 +65,31 @@
   word-break: break-all; color: #c3cad9;
 }
 
+
+/* --------------------------------------------------------------- devices */
+
+.pinrow { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 4px; }
+/* One height for every control in the row, so the labels above them line up.
+   The PIN field is set in a larger face and would otherwise stand taller than
+   its neighbours and drag its label with it. */
+.pinrow input, .pinrow button { height: 38px; }
+.field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }
+.field input { min-width: 0; }
+
+/* Four digits, spaced out, so reading them off another screen is easy. */
+#pinInput {
+  font-family: var(--mono); font-size: 18px; letter-spacing: 0.3em;
+  width: 7ch; text-align: center;
+  /* The extra left padding balances the letter-spacing, which otherwise
+     leaves a gap only on the right and makes four digits look off-centre. */
+  padding: 0 4px 0 10px;
+}
+
+.devices { list-style: none; margin: 14px 0 0; padding: 0; }
+.devices li {
+  display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap;
+  padding: 9px 0; border-bottom: 1px solid var(--line);
+}
+.devices li:last-child { border-bottom: none; }
+.device-name { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.device-id { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }

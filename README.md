@@ -217,9 +217,19 @@ your compositor re-read its config throws it away.
 ### Pairing a client
 
 Open **Clarity Stream Client**. It finds hosts on the network by itself. Press
-**Pair**, and it shows you a PIN; approve that PIN on the host, through
-Sunshine's web interface at `https://<host>:47990`. After that the host shows
-up as paired and **Play** starts a session.
+**Pair** and it shows four digits.
+
+Type those four digits into the host's **Devices** panel and press **Pair it**.
+That is the whole thing; you never open Sunshine's web interface, which is
+where everyone else has to go to do this.
+
+The host needs Sunshine's web username and password once, because accepting a
+PIN goes through Sunshine's own API. The Devices panel asks for them the first
+time, checks them before saving anything, and keeps them in your system
+keyring where there is one. If Sunshine has never had credentials set at all,
+it says so and tells you the one command that sets them.
+
+The same panel lists what is already paired and lets you remove any of it.
 
 ### What is actually tested
 
