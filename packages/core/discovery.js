@@ -13,7 +13,7 @@ const SERVICE = '_nvstream._tcp';
 
 // avahi-browse -p emits semicolon-separated records. The resolved ones start
 // with '=' and carry the address and port:
-//   =;iface;IPv4;name;_nvstream._tcp;local;host.local;192.168.0.127;47989;
+//   =;iface;IPv4;name;_nvstream._tcp;local;host.local;10.0.0.5;47989;
 function parseBrowse(stdout) {
   const hosts = new Map();
   for (const line of (stdout ?? '').split('\n')) {

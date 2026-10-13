@@ -1,4 +1,4 @@
-# Maintainer: Jose <joserobertoazevedo@gmail.com>
+# Maintainer: FromChaosComesClarity <https://github.com/FromChaosComesClarity>
 #
 # Three packages from one build, because the Electron runtime is ~250 MB and
 # the host and the client should not each carry their own copy.

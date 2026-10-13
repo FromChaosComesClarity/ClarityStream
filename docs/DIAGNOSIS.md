@@ -20,7 +20,7 @@ inferred. Where something could not be measured it says so.
 Two findings from this alone:
 
 **The AMD iGPU drives nothing.** `card0` has four connectors and all four are
-disconnected. Jose does not use it. But Sunshine does not know that: it
+disconnected, and nothing on this machine uses it. Sunshine does not know
 enumerates `card0` as readily as `card1`, and capturing it yields a stream that
 is valid, healthy and entirely black. This is why `adapter_name` gets pinned to
 `/dev/dri/renderD128` rather than left to chance.

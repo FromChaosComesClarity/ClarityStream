@@ -156,19 +156,102 @@ Both are faces over the same engine the CLI uses.
 
 ## Installing it
 
-```
-npm run pkg
-sudo pacman -U dist/pkg/clarity-stream-common-*.zst dist/pkg/clarity-stream-0*.zst
+Grab the three packages from the
+[latest release](https://github.com/FromChaosComesClarity/ClarityStream/releases/latest)
+and install the ones that machine needs. Arch-based distributions only.
+
+**On the machine whose games you want to stream:**
+
+```sh
+sudo pacman -U clarity-stream-common-*.pkg.tar.zst clarity-stream-0.*.pkg.tar.zst
+sudo pacman -S sunshine          # the streaming host itself
 ```
 
-Three packages: a shared one carrying the engine and a vendored Electron, and
-a small one for each app. Nothing outside them is required, not even a system
-Node: the CLI and the root helper run on the bundled Electron. There is no
-AppImage, and [docs/PACKAGING.md](docs/PACKAGING.md) explains why this is the
-one project here that cannot be one.
+**On a machine you want to play from:**
 
-Next: pairing accepted from the host's own window (the handshake is
-understood, it is `POST /api/pin` plus `moonlight pair --pin`).
+```sh
+sudo pacman -U clarity-stream-common-*.pkg.tar.zst clarity-stream-client-*.pkg.tar.zst
+sudo pacman -S moonlight-qt
+```
+
+A machine that is both takes all three. `clarity-stream-common` carries the
+engine and a bundled Electron, which is why it is the big one and why the
+other two are a few kilobytes; a machine that is host and client holds one
+copy of the runtime, not two.
+
+Nothing else is needed. No system Node, no system Electron, no matching
+versions to keep up with. Installing changes no configuration, starts no
+service and touches no display: everything happens when you ask for it.
+
+### Setting up the host
+
+Open **Clarity Stream** from your launcher, or run `clarity-stream-host`.
+
+1. It reads the machine and tells you what would stop a stream, with the
+   evidence for each thing. Press **Fix what I can** and it applies everything
+   that does not need root: the capture method, which GPU to capture, which
+   display, the encoder, and starting Sunshine as a user service.
+2. Press **Publish Clarity entries** to put a Couch Mode tile in Moonlight.
+3. Press **Measure now** whenever you want it to prove the capture is not
+   black, rather than tell you it should be fine.
+
+That is enough to stream. The phantom display is optional and worth it.
+
+### The phantom display
+
+Streaming your real monitor sends whatever resolution it happens to be, so a
+1080p client gets your ultrawide letterboxed and most of the bitrate goes on
+black bars. A phantom display is an unused port on your graphics card, forced
+on with an EDID Clarity Stream generates, so the client gets its own screen at
+its own resolution and your real monitors are never touched.
+
+In the host window, under **Phantom display**, pick a spare connector and a
+resolution and press **Prepare it**. It writes out a plan, you run one command
+as root, and you reboot once. The reboot is not avoidable: NVIDIA reads a
+firmware EDID only at boot.
+
+Afterwards press **Keep it parked**, which installs a small user service. That
+matters more than it sounds: parking is runtime state, and anything that makes
+your compositor re-read its config throws it away.
+
+### Pairing a client
+
+Open **Clarity Stream Client**. It finds hosts on the network by itself. Press
+**Pair**, and it shows you a PIN; approve that PIN on the host, through
+Sunshine's web interface at `https://<host>:47990`. After that the host shows
+up as paired and **Play** starts a session.
+
+### What is actually tested
+
+Honestly: one machine. Omarchy (Arch), Hyprland 0.56, an RTX 4060 Ti on the
+proprietary driver, Limine with a unified kernel image. Everything in
+[docs/DIAGNOSIS.md](docs/DIAGNOSIS.md) was measured there.
+
+The parts most likely to need work elsewhere:
+
+- **The phantom display** is the deepest into the system. The bootloader
+  plumbing understands Limine, GRUB and systemd-boot, but only Limine has been
+  run for real. The parking and the workspace reservation are Hyprland-specific.
+- **AMD and Intel hosts** should need less of this, not more: the black-screen
+  fault this exists for is an NVIDIA one. The diagnosis still applies, and the
+  faults that do not match simply do not fire.
+- **Capture on anything but a wlroots compositor** is untested. Sunshine has a
+  KWin path that Clarity Stream does not drive yet.
+
+If something is wrong, `clarity-stream doctor` prints what it measured and
+what it concluded, which is the useful thing to paste into an issue. It exits
+0 when a stream should work, 1 when something would stop it, and 2 when it
+could not tell.
+
+### Building it yourself
+
+```sh
+git clone https://github.com/FromChaosComesClarity/ClarityStream
+cd ClarityStream && npm install && npm run pkg
+```
+
+The packages land in `dist/pkg/`. To run it without installing, `npm start`
+for the host and `npm run start:client` for the client.
 
 ## Licence
 
