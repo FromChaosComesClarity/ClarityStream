@@ -103,12 +103,16 @@ function defaultOutput(facts) {
     if (phantom) return phantom;
   } else if (real.length) {
     // Never suggest a phantom when it is not the strategy in use.
-    const focused = real.find((o) => o.monitor?.focused);
-    if (focused) return focused;
+    //
+    // Biggest first, focus only as a tie-break. Preferring the focused
+    // monitor made the answer change as the user moved between windows, so
+    // the doctor's suggestion and the monitor a stream resized could differ
+    // from one minute to the next. Area is stable and is what somebody means
+    // by "my monitor".
+    const area = (o) => (o.monitor?.width ?? 0) * (o.monitor?.height ?? 0);
     return real.reduce((best, o) => {
-      const area = (o.monitor?.width ?? 0) * (o.monitor?.height ?? 0);
-      const bestArea = (best.monitor?.width ?? 0) * (best.monitor?.height ?? 0);
-      return area > bestArea ? o : best;
+      if (area(o) !== area(best)) return area(o) > area(best) ? o : best;
+      return o.monitor?.focused ? o : best;
     }, real[0]);
   }
   const focused = outs.find((o) => o.monitor?.focused);

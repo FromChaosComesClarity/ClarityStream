@@ -330,7 +330,7 @@ function appsCmd(rest) {
 function streamDisplayCmd(rest) {
   const sd = require('../packages/core/stream-display');
   const hypr = require('../packages/core/hypr');
-  const { enumerateOutputs } = require('../packages/core/outputs');
+  const { enumerateOutputs, defaultOutput } = require('../packages/core/outputs');
 
   const action = rest.find((a) => !a.startsWith('--'));
   const dry = rest.includes('--dry-run');
@@ -375,7 +375,17 @@ function streamDisplayCmd(rest) {
   const facts = probe();
   const outs = enumerateOutputs(facts);
   const idx = facts.sunshine.confRaw?.match(/^\s*output_name\s*=\s*(\d+)/m)?.[1];
-  const target = (idx !== undefined && outs.find((o) => String(o.index) === idx)) ?? outs.find((o) => o.monitor);
+  // `??` falls through on null and undefined, not on false, so the old
+  // `(idx !== undefined && find(...)) ?? fallback` produced `false` whenever
+  // output_name was unset and never reached the fallback at all. Every
+  // single-monitor host took that path, which is most laptops, and the resize
+  // never ran there. Found by the session on the AMD machine, by reading.
+  const pinned = idx === undefined ? undefined : outs.find((o) => String(o.index) === idx);
+  // Unpinned, use the one the diagnosis would recommend rather than whichever
+  // output happens to come first. On a single-monitor host they are the same
+  // thing; on a desktop they are not, and resizing the wrong screen is worse
+  // than resizing none.
+  const target = pinned ?? defaultOutput(facts) ?? outs.find((o) => o.monitor);
   if (!target?.monitor) { say('no streamable monitor; leaving the display alone'); return 1; }
 
   const live = monitors.find((m) => m.name === target.connector);
@@ -392,6 +402,16 @@ function streamDisplayCmd(rest) {
   // running slower than the client asked for, because a monitor cannot
   // produce 120 distinct frames a second at 60Hz. Lowering it would cost a
   // mode change, and a blank screen, to make the stream no better.
+  // The chosen mode is the one already running, in both dimensions and
+  // refresh: changing to it costs a reconfigure and a blank screen and
+  // achieves nothing. Happens on a panel with a single refresh rate when the
+  // client asks for more than it can do.
+  if (live.width === want.width && live.height === want.height &&
+      Math.abs(live.refreshRate - want.refresh) < 0.5) {
+    say(`${live.name} is already ${want.raw}; nothing to change`);
+    return 0;
+  }
+
   if (live.width === want.width && live.height === want.height) {
     if (live.refreshRate + 0.5 >= fps) {
       say(`${live.name} is already ${live.width}x${live.height} at ${live.refreshRate.toFixed(2)}Hz; nothing to change`);
