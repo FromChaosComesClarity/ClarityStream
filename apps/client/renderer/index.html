@@ -69,7 +69,15 @@
           <option value="windowed">windowed</option>
         </select>
       </label>
+      <label>Your keyboard shortcuts
+        <select id="captureSystemKeys">
+          <option value="always">go to the host</option>
+          <option value="fullscreen">go to the host when fullscreen</option>
+          <option value="never">stay on this machine</option>
+        </select>
+      </label>
       <label class="check"><input type="checkbox" id="vsync"> V-Sync</label>
+      <p id="keysHint" class="muted narrow"></p>
       <p id="resHint" class="muted narrow"></p>
     </div>
   </section>

@@ -101,8 +101,25 @@ function pairCommand(address, pin) {
   return ['moonlight', 'pair', address, '--pin', pin];
 }
 
+// How Moonlight gets out of the way of the client's own compositor.
+//
+//   never       the compositor keeps its shortcuts; Super+W closes the stream
+//               window instead of reaching the host
+//   fullscreen  shortcuts go to the host while the stream is fullscreen
+//   always      shortcuts go to the host even windowed
+//
+// On Wayland this needs the compositor to implement
+// keyboard-shortcuts-inhibit-unstable-v1, which Hyprland does. Whatever the
+// setting, Ctrl+Alt+Shift+Q always ends the session: Moonlight reserves it so
+// there is a way out of a capture that is working.
+const CAPTURE_KEYS = ['never', 'fullscreen', 'always'];
+const ESCAPE_COMBO = 'Ctrl+Alt+Shift+Q';
+
 function streamCommand(address, appName, opts = {}) {
   const args = ['stream', address, appName];
+  if (opts.captureSystemKeys && CAPTURE_KEYS.includes(opts.captureSystemKeys)) {
+    args.push('--capture-system-keys', opts.captureSystemKeys);
+  }
   if (opts.resolution) args.push('--resolution', opts.resolution);
   if (opts.fps) args.push('--fps', String(opts.fps));
   if (opts.bitrate) args.push('--bitrate', String(opts.bitrate));
@@ -127,5 +144,5 @@ function moonlightPresent() {
 
 module.exports = {
   serverInfo, readMoonlightHosts, randomPin, pairCommand, streamCommand,
-  quitCommand, moonlightPresent, MOONLIGHT_CONF
+  quitCommand, moonlightPresent, CAPTURE_KEYS, ESCAPE_COMBO, MOONLIGHT_CONF
 };

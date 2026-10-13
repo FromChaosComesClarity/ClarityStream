@@ -31,6 +31,10 @@ const DEFAULTS = {
   bitrate: 20000,
   displayMode: 'fullscreen',
   vsync: true,
+  // Send the client's own keyboard shortcuts to the host rather than letting
+  // the local compositor eat them. Super+W closing the stream window is the
+  // thing this fixes.
+  captureSystemKeys: 'always',
   preferredApp: 'Clarity Couch Mode'
 };
 
@@ -113,7 +117,9 @@ function hosts() {
 ipcMain.handle('hosts', () => ({
   hosts: hosts(),
   moonlight: hostLink.moonlightPresent(),
-  settings: readSettings()
+  settings: readSettings(),
+  captureChoices: hostLink.CAPTURE_KEYS,
+  escapeCombo: hostLink.ESCAPE_COMBO
 }));
 
 ipcMain.handle('settings:set', (_e, patch) => writeSettings(patch ?? {}));
@@ -136,7 +142,8 @@ ipcMain.handle('launch', (_e, { address, appName, settings }) => {
     fps: s.fps,
     bitrate: s.bitrate,
     displayMode: s.displayMode,
-    vsync: s.vsync
+    vsync: s.vsync,
+    captureSystemKeys: s.captureSystemKeys
   });
   const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
   child.unref();

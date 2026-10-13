@@ -251,6 +251,20 @@ surface and Moonlight never touches it.
 
 The host window offers the same thing as a button on the finding.
 
+### Your own keyboard shortcuts
+
+While streaming, the client's shortcuts should reach the host rather than the
+machine you are sitting at: on a tiling desktop, Super+W otherwise closes the
+stream window instead of doing whatever it does over there.
+
+The client sends `--capture-system-keys always` by default, and offers
+`fullscreen` and `never`. On Wayland this needs the compositor to implement
+`keyboard-shortcuts-inhibit-unstable-v1`, which Hyprland does.
+
+**Ctrl+Alt+Shift+Q always ends a session**, whatever the setting. Moonlight
+reserves it, which matters most when the capture is working and the usual ways
+out have stopped.
+
 ### Pairing a client
 
 Open **Clarity Stream Client**. It finds hosts on the network by itself. Press
