@@ -15,6 +15,7 @@ const ORDER = [
   'capture-aimed-at-idle-card',
   'headless-output-cannot-be-captured',
   'ports-blocked-by-firewall',
+  'stream-ports-ipv4-only',
   'display-left-resized',
   'stream-resize-not-wired',
   'phantom-armed-but-absent',

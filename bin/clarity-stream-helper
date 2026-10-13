@@ -84,8 +84,31 @@ function allowedPath(p) {
   return WRITABLE.some((re) => re.test(resolved));
 }
 
+// The scoped form cannot be enumerated, because the network and the list of
+// ports both vary. It is validated by shape instead, and every port in it has
+// to be one of Sunshine's:
+//
+//   ufw allow from <cidr> to any port <p,p,p> proto tcp|udp
+//
+// Opening the ports to one network rather than to every network a laptop ever
+// joins is the better default, so it is worth supporting properly rather than
+// telling people to run it themselves.
+function allowedScopedUfw(argv) {
+  if (argv.length !== 10) return false;
+  const [cmd, allow, from, cidr, to, any, port, ports, proto, family] = argv;
+  if (cmd !== 'ufw' || allow !== 'allow' || from !== 'from') return false;
+  if (to !== 'to' || any !== 'any' || port !== 'port' || proto !== 'proto') return false;
+  if (family !== 'tcp' && family !== 'udp') return false;
+  // IPv4 CIDR or IPv6 CIDR, nothing clever.
+  if (!/^(\d{1,3}(\.\d{1,3}){3}\/\d{1,2}|[0-9a-fA-F:]+\/\d{1,3})$/.test(cidr)) return false;
+  const wanted = new Set(STREAM_PORTS.filter(([, p]) => p === family).map(([n]) => String(n)));
+  const list = ports.split(',');
+  return list.length > 0 && list.every((p) => wanted.has(p));
+}
+
 function allowedRun(argv) {
-  return RUNNABLE.some((a) => a.length === argv.length && a.every((v, i) => v === argv[i]));
+  if (RUNNABLE.some((a) => a.length === argv.length && a.every((v, i) => v === argv[i]))) return true;
+  return allowedScopedUfw(argv);
 }
 
 function describe(step) {

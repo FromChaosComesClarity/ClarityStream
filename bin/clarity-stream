@@ -428,8 +428,16 @@ function firewallCmd(rest) {
   console.log(`  ${C.d}loopback. From another machine the host simply does not answer.${C.x}\n`);
 
   if (!rest.includes('--open')) {
-    console.log(`${C.d}Run with --open to write the plan that fixes it.${C.x}`);
+    console.log(`${C.d}Run with --open to write the plan that fixes it,${C.x}`);
+    console.log(`${C.d}or --open --lan to allow only this network rather than every network.${C.x}`);
     return 1;
+  }
+
+  // On a laptop that joins other networks, opening the streaming ports to all
+  // of them is the wrong default. Raised by the session on the AMD machine.
+  const scope = rest.includes('--lan') ? firewall.lanCidr() : null;
+  if (rest.includes('--lan') && !scope) {
+    console.log(`${C.y}Could not work out this machine's network, so the plan opens the ports everywhere.${C.x}`);
   }
 
   const fs = require('node:fs');
@@ -437,7 +445,8 @@ function firewallCmd(rest) {
   const dir = pathMod3.join(os.homedir(), '.cache', 'clarity-stream');
   fs.mkdirSync(dir, { recursive: true });
   const planFile = pathMod3.join(dir, 'firewall-plan.json');
-  fs.writeFileSync(planFile, JSON.stringify(firewall.planOpen(st), null, 2));
+  fs.writeFileSync(planFile, JSON.stringify(firewall.planOpen(st, { scope }), null, 2));
+  if (scope) console.log(`${C.d}scoped to ${scope}${C.x}`);
   console.log(`${C.b}Plan written to${C.x} ${planFile}`);
   console.log(`${C.b}Apply it:${C.x}`);
   console.log(`  ${paths.helperCommand(planFile)}`);

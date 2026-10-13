@@ -324,6 +324,28 @@ const FAULTS = [
   },
 
   {
+    id: 'stream-ports-ipv4-only',
+    title: 'The stream ports are open over IPv4 but not IPv6',
+    severity: SEVERITY.DEGRADED,
+    // Raised by the session on the AMD laptop before it could happen to
+    // anyone: ufw keeps IPv4 and IPv6 rules in separate files, and reading
+    // them into one set reports a host as open when every rule is IPv4 and
+    // the client arrives over IPv6. The host advertises itself over both.
+    detect: (f) => {
+      const fw = f.firewall;
+      if (!fw?.present || fw.unknown || !fw.blocking) return null;
+      if (fw.missing?.length) return null;              // the blocker covers it
+      if (!fw.missingV6?.length) return null;
+      return {
+        evidence: `${fw.missingV6.length} of Sunshine's ports have no IPv6 rule.`,
+        detail: 'A client that reaches this host over IPv6 is dropped, and nothing says so. ' +
+                'Most clients use IPv4 and will not notice.',
+        fix: { kind: 'none' }
+      };
+    }
+  },
+
+  {
     id: 'phantom-not-armed',
     title: 'No phantom stream display',
     severity: SEVERITY.INFO,

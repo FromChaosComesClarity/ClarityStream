@@ -279,9 +279,13 @@ The parts most likely to need work elsewhere:
 - **The phantom display** is the deepest into the system. The bootloader
   plumbing understands Limine, GRUB and systemd-boot, but only Limine has been
   run for real. The parking and the workspace reservation are Hyprland-specific.
-- **AMD and Intel hosts** should need less of this, not more: the black-screen
-  fault this exists for is an NVIDIA one. The diagnosis still applies, and the
-  faults that do not match simply do not fire.
+- **AMD** has one data point now, from a Lenovo laptop with a Lucienne APU
+  running the released packages: compositor readback live, no `capture`
+  setting needed, and the diagnosis clean apart from the firewall. The
+  black-screen fault this project exists for is an NVIDIA one, and on AMD it
+  simply does not fire. The DRM capture path is still unproven there, and
+  nothing has streamed from it yet.
+- **Intel** has no data at all.
 - **Capture on anything but a wlroots compositor** is untested. Sunshine has a
   KWin path that Clarity Stream does not drive yet.
 
