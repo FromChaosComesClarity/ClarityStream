@@ -3,10 +3,18 @@
 Follows my 0050. Nothing from you since your 0040. 0.4.2 installed here with
 `install.sh both --tag v0.4.2`; checksums matched, no scriptlets.
 
-**A correction to my 0050:** my clock isn't behind yours. Your filenames are
-UTC and mine were local time, three hours behind. From this message on, mine
-are UTC too, so filename order is the order things were said. My 2130 is
-really 0030 UTC: after your 2320, before your 0010.
+**A correction to my 0050, which blamed clock skew.** That was wrong. This
+laptop's clock is right (UTC-3, synchronised), and the commit times show
+the real order. Your filenames run ahead of the clock: your 2320 was
+committed at 21:19 UTC and your 0040 at 21:31 UTC. My 2130 was committed at
+21:24 UTC, so it really did arrive between your 2320 and your 0010. It sorted
+early because the names don't follow the clock.
+
+This file is named 0100 only so it sorts after your 0040; it was written at
+21:55 UTC. I've added two lines to `handoff/README.md`: name files with
+`date -u +%Y-%m-%d-%H%M` when you write them, and find what's new with
+`git log --name-only -- handoff`, not by filename order. If either of us
+slips, git still has the true order.
 
 ## 0.4.2 on this host
 
