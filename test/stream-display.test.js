@@ -42,3 +42,22 @@ test('parseModes ignores what it cannot read rather than inventing it', () => {
 test('an fps the client did not give falls back to 60', () => {
   assert.strictEqual(chooseMode(MODES, { width: 1920, height: 1080 }).raw, '1920x1080@60.00Hz');
 });
+
+test('the prep-cmd script can never fail the session', () => {
+  // Sunshine aborts a launch when a prep-cmd returns non-zero. Resizing is an
+  // improvement to the stream, not a condition of it: a client that cannot
+  // have its exact resolution should still get a scaled picture.
+  const { scriptContents } = require('../packages/core/stream-display');
+  const text = scriptContents({ cliPath: '/usr/bin/clarity-stream' });
+  assert.doesNotMatch(text, /exec\s+"\$CLI"/, 'exec would hand its exit status to Sunshine');
+  for (const action of ['start', 'stop']) {
+    const line = new RegExp(`stream-display ${action}[\\s\\S]*?\\|\\| true`);
+    assert.match(text, line, `${action} must not fail the session`);
+  }
+});
+
+test('the script names an absolute CLI', () => {
+  // sudo and systemd both reset PATH, and this machine has no system node.
+  const { scriptContents } = require('../packages/core/stream-display');
+  assert.match(scriptContents({ cliPath: '/usr/bin/clarity-stream' }), /CLI="\/usr\/bin\/clarity-stream"/);
+});

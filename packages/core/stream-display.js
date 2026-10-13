@@ -107,15 +107,18 @@ set -u
 
 CLI="${cliPath}"
 
+# Neither half may fail the session. Sunshine aborts a launch when a prep-cmd
+# returns non-zero, and resizing the monitor is an improvement to the stream,
+# not a condition of it: a client that cannot have its exact resolution should
+# still get a scaled picture rather than an error. The CLI logs why.
 case "\${1:-}" in
   start)
-    exec "\$CLI" stream-display start \\
+    "\$CLI" stream-display start \\
       --width "\${SUNSHINE_CLIENT_WIDTH:-0}" \\
       --height "\${SUNSHINE_CLIENT_HEIGHT:-0}" \\
-      --fps "\${SUNSHINE_CLIENT_FPS:-60}"
+      --fps "\${SUNSHINE_CLIENT_FPS:-60}" || true
     ;;
   stop)
-    # Must not fail the session teardown, whatever happens here.
     "\$CLI" stream-display stop || true
     ;;
   *)
