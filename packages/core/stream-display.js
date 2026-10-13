@@ -37,14 +37,45 @@ function parseModes(list) {
 
 // Which of the monitor's real modes best serves what the client asked for.
 //
-// Only an exact resolution match is offered: a monitor set to "nearly" the
-// requested size still makes Sunshine scale, and it has moved the user's
-// desktop for nothing. Better to leave the mode alone and let the scaling
-// happen without disturbing anything.
+// What makes the picture right on the client is the ASPECT RATIO, not the
+// exact resolution. A 16:9 client fed a 21:9 capture gets letterboxed and
+// most of the bitrate goes on black bars, which is the whole thing this
+// feature exists to avoid. A 16:9 client fed a different 16:9 size just gets
+// scaled, and looks correct.
+//
+// The physical panel may well look stretched while this is happening. That
+// does not matter: if the machine is being streamed from, nobody is sitting
+// in front of it.
+//
+// So, in order:
+//   1. the exact resolution, which needs no scaling anywhere;
+//   2. failing that, the same aspect ratio, taking the smallest mode that is
+//      at least as large as the request, so the client never upscales, and
+//      the largest available if every one of them is smaller;
+//   3. failing that, leave the monitor alone and let Sunshine scale, because
+//      nothing here would improve on it.
+function aspect(w, h) { return w / h; }
+
 function chooseMode(available, want) {
   const modes = parseModes(available);
-  const sameSize = modes.filter((m) => m.width === want.width && m.height === want.height);
-  if (!sameSize.length) return null;
+  if (!modes.length || !want.width || !want.height) return null;
+
+  const exact = modes.filter((m) => m.width === want.width && m.height === want.height);
+  const wantRatio = aspect(want.width, want.height);
+
+  let sameSize = exact;
+  if (!sameSize.length) {
+    // Within 1%: 1366x768 is 1.7786 and 16:9 is 1.7778, and they are the
+    // same shape as far as anyone looking at the picture is concerned.
+    const sameShape = modes.filter((m) => Math.abs(aspect(m.width, m.height) - wantRatio) / wantRatio < 0.01);
+    if (!sameShape.length) return null;
+
+    const atLeast = sameShape.filter((m) => m.width >= want.width && m.height >= want.height);
+    const pick = atLeast.length
+      ? atLeast.reduce((a, b) => (a.width * a.height <= b.width * b.height ? a : b))
+      : sameShape.reduce((a, b) => (a.width * a.height >= b.width * b.height ? a : b));
+    sameSize = sameShape.filter((m) => m.width === pick.width && m.height === pick.height);
+  }
 
   const wantFps = Number(want.fps) || 60;
   // Closest to what the client asked for, tie broken upwards. Picking the

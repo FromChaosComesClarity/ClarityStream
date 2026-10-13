@@ -5,18 +5,45 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { chooseMode, parseModes } = require('../packages/core/stream-display');
 
+// Shaped like the development machine's ultrawide: a 21:9 native mode and a
+// ladder of 16:9 and 16:10 ones under it.
 const MODES = [
   '3440x1440@165.00Hz', '3440x1440@144.00Hz', '3440x1440@60.00Hz',
+  '2560x1440@60.00Hz',
   '1920x1080@144.00Hz', '1920x1080@60.00Hz', '1920x1080@59.94Hz',
-  '2560x1440@60.00Hz', '1280x720@60.00Hz'
+  '1600x900@60.00Hz', '1280x720@60.00Hz',
+  '1920x1200@59.88Hz', '1280x800@59.81Hz'
 ];
 
-test('a mode is only offered when the resolution matches exactly', () => {
-  // "Nearly" the right size still makes Sunshine scale, and has moved the
-  // desktop for nothing.
-  assert.strictEqual(chooseMode(MODES, { width: 1366, height: 768, fps: 60 }), null);
-  assert.strictEqual(chooseMode(MODES, { width: 3840, height: 2160, fps: 60 }), null);
-  assert.ok(chooseMode(MODES, { width: 1920, height: 1080, fps: 60 }));
+test('an exact resolution is preferred, because nothing scales anywhere', () => {
+  assert.strictEqual(chooseMode(MODES, { width: 1920, height: 1080, fps: 60 }).raw, '1920x1080@60.00Hz');
+  assert.strictEqual(chooseMode(MODES, { width: 1280, height: 720, fps: 60 }).raw, '1280x720@60.00Hz');
+});
+
+test('without an exact mode, the same aspect ratio is used', () => {
+  // What makes the picture right on the client is the shape, not the size. A
+  // 16:9 client fed a 21:9 capture is letterboxed and most of the bitrate
+  // goes on black bars. The panel may look stretched; nobody is watching it.
+  const m = chooseMode(MODES, { width: 1366, height: 768, fps: 60 });
+  assert.ok(m, '16:9 has other sizes available');
+  assert.strictEqual(m.width / m.height, 16 / 9);
+});
+
+test('the smallest mode that is big enough wins, so the client never upscales', () => {
+  // 1366x768 could take 1280x720 or 1600x900. 1600x900 is the first that does
+  // not make the client enlarge the picture.
+  assert.strictEqual(chooseMode(MODES, { width: 1366, height: 768, fps: 60 }).raw, '1600x900@60.00Hz');
+});
+
+test('when every same-shape mode is smaller, the largest is used', () => {
+  const small = ['1280x720@60.00Hz', '1600x900@60.00Hz'];
+  assert.strictEqual(chooseMode(small, { width: 3840, height: 2160, fps: 60 }).raw, '1600x900@60.00Hz');
+});
+
+test('a shape the monitor cannot make is left alone', () => {
+  // Nothing here would improve on letting Sunshine scale, and changing the
+  // mode would disturb the desktop for no gain.
+  assert.strictEqual(chooseMode(MODES, { width: 800, height: 480, fps: 60 }), null);
 });
 
 test('the refresh closest to the request wins', () => {

@@ -368,10 +368,17 @@ function streamDisplayCmd(rest) {
     say(`${live.name} has no ${width}x${height} mode; leaving it alone and letting Sunshine scale`);
     return 0;
   }
-  if (live.width === want.width && live.height === want.height &&
-      Math.abs(live.refreshRate - want.refresh) < 0.5) {
-    say(`${live.name} is already ${want.raw}; nothing to change`);
-    return 0;
+  // Already the right size. Refresh is only worth touching when the panel is
+  // running slower than the client asked for, because a monitor cannot
+  // produce 120 distinct frames a second at 60Hz. Lowering it would cost a
+  // mode change, and a blank screen, to make the stream no better.
+  if (live.width === want.width && live.height === want.height) {
+    if (live.refreshRate + 0.5 >= fps) {
+      say(`${live.name} is already ${live.width}x${live.height} at ${live.refreshRate.toFixed(2)}Hz; nothing to change`);
+      return 0;
+    }
+    say(`${live.name} is already ${live.width}x${live.height} but running at ` +
+        `${live.refreshRate.toFixed(2)}Hz, below the ${fps} the client asked for`);
   }
 
   // Recorded before anything changes, so the undo has something to restore
