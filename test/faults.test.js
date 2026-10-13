@@ -161,6 +161,7 @@ test('a compositor that cannot be reached is unknown, not a fault', () => {
   // that as "the phantom is down" is a false blocker, and the whole point of
   // this project is that a confident wrong answer is the expensive failure.
   const f = healthy();
+  f.settings = { strategy: 'phantom' };
   f.compositor.monitors = null;
   f.compositor.workspaces = null;
 
@@ -183,6 +184,8 @@ test('a compositor that cannot be reached is unknown, not a fault', () => {
 
 test('an unknown check is reported but does not claim a stream would fail', () => {
   const f = healthy();
+  // The phantom's checks only run for someone using the phantom.
+  f.settings = { strategy: 'phantom' };
   f.compositor.monitors = null;
   f.compositor.workspaces = null;
   const r = diagnose(f);
@@ -202,6 +205,7 @@ test('a real blocker still reads as a blocker', () => {
 
 test('an unknown does not keep a headline that asserts the fault', () => {
   const f = healthy();
+  f.settings = { strategy: 'phantom' };
   f.compositor.monitors = null;
   const finding = diagnose(f).findings.find((x) => x.id === 'phantom-armed-but-absent');
   assert.ok(finding);
@@ -243,4 +247,30 @@ test('a firewall whose rules cannot be read is unknown, not a blocker', () => {
   assert.strictEqual(hit.unknown, true);
   assert.match(hit.title, /could not tell/i);
   assert.strictEqual(diagnose(f).streamable, null);
+});
+
+test('the phantom faults stay quiet when the phantom is not the strategy', () => {
+  // A leftover phantom under the resize strategy is not a problem to report.
+  const f = healthy();
+  f.settings = { strategy: 'resize' };
+  const ids = diagnose(f).findings.map((x) => x.id);
+  for (const id of ['phantom-armed-but-absent', 'phantom-not-parked-at-login',
+                    'phantom-holds-a-user-workspace', 'phantom-touches-the-desktop']) {
+    assert.ok(!ids.includes(id), `${id} should not fire under the resize strategy`);
+  }
+});
+
+test('a desktop left at a streaming resolution is reported', () => {
+  const f = healthy();
+  f.strandedResize = { connector: 'DP-2', was: '3440x1440@165.00', scale: 1.25, position: '900x0' };
+  const hit = byId('display-left-resized').detect(f);
+  assert.ok(hit);
+  assert.match(hit.evidence, /never put back/);
+  assert.strictEqual(hit.fix.kind, 'restore-display');
+});
+
+test('no stranded resize means nothing to say', () => {
+  const f = healthy();
+  f.strandedResize = null;
+  assert.strictEqual(byId('display-left-resized').detect(f), null);
 });

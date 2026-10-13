@@ -305,25 +305,24 @@ function buildApps(apply, pruneStock = false) {
   try { doc = sunshineApps.read(f.sunshine.appsPath); }
   catch (err) { return { ok: false, reason: err.message }; }
 
-  const ph = enumerateOutputs(f).find((o) => o.isPhantom);
-  if (ph && apply) {
-    const m = ph.monitor;
-    phantomScript.install({
-      connector: ph.connector,
-      mode: m ? `${m.width}x${m.height}@${Number(m.refresh).toFixed(2)}` : `${ph.preferredMode ?? '1920x1080'}@60`,
-      position: m ? `${m.x}x${m.y}` : 'auto',
-      scale: m ? m.scale : 1
-    });
+  // Under the resize strategy the entries carry a step that sets the streamed
+  // monitor to the client's resolution for the duration of the session.
+  const settings = require('../../packages/core/settings').read();
+  const streamDisplay = require('../../packages/core/stream-display');
+  let prepScript = null;
+  if (settings.strategy === 'resize') {
+    prepScript = streamDisplay.SCRIPT_PATH;
+    if (apply) streamDisplay.installScript({ cliPath: paths.cliPath() });
   }
 
   const found = clarityApp.find();
   const entries = [];
   if (found.found) {
     entries.push(sunshineApps.buildEntry({
-      name: 'Clarity Couch Mode', cmd: clarityApp.couchCommand(found.path)
+      name: 'Clarity Couch Mode', cmd: clarityApp.couchCommand(found.path), prepScript
     }));
   }
-  entries.push(sunshineApps.buildEntry({ name: 'Clarity Desktop' }));
+  entries.push(sunshineApps.buildEntry({ name: 'Clarity Desktop', prepScript }));
 
   const changes = entries.map((e) => sunshineApps.upsert(doc, e));
   const stock = sunshineApps.stockPresent(doc);

@@ -211,8 +211,16 @@ function appsCmd(rest) {
   console.log(`${C.b}Clarity Stream — Moonlight app list${C.x}`);
   console.log(`${C.d}${appsPath}${C.x}\n`);
 
-  const phantom = enumerateOutputs(facts).find((o) => o.isPhantom);
+  const settings = require('../packages/core/settings').read();
+  const streamDisplay = require('../packages/core/stream-display');
   let scriptPath = null;
+  if (settings.strategy === 'resize') {
+    scriptPath = streamDisplay.SCRIPT_PATH;
+    if (apply) streamDisplay.installScript({ cliPath: require('../packages/core/paths').cliPath() });
+    console.log(`  resize     the streamed monitor follows the client's resolution`);
+    console.log(`  ${C.d}set when a session starts, put back when it ends${C.x}\n`);
+  }
+  const phantom = settings.strategy === 'phantom' && enumerateOutputs(facts).find((o) => o.isPhantom);
   if (phantom) {
     const mon = phantom.monitor;
     const opts = {
@@ -236,8 +244,10 @@ function appsCmd(rest) {
     console.log(`  phantom    ${phantom.connector} at ${opts.mode}`);
     console.log(`  ${C.d}stays up: Sunshine binds output_name at service start, so a${C.x}`);
     console.log(`  ${C.d}phantom that is down then makes every launch fail${C.x}\n`);
-  } else {
+  } else if (settings.strategy === 'phantom') {
     console.log(`  ${C.y}no phantom armed; entries will stream whatever output_name points at${C.x}\n`);
+  } else if (settings.strategy === 'none') {
+    console.log(`  ${C.d}entries stream the monitor as it is; the client scales${C.x}\n`);
   }
 
   const clarityApp = require('../packages/core/clarity-app');
@@ -248,7 +258,7 @@ function appsCmd(rest) {
     entries.push(sunshineApps.buildEntry({
       name: 'Clarity Couch Mode',
       cmd: clarityApp.couchCommand(found.path),
-      phantomScript: scriptPath
+      prepScript: scriptPath
     }));
   } else {
     console.log(`  ${C.y}Clarity.AppImage not found, so no Couch Mode tile.${C.x}`);
@@ -259,7 +269,7 @@ function appsCmd(rest) {
   for (const s2 of stale) {
     console.log(`  ${C.y}note${C.x} ${pathMod2.basename(s2.file)} points at ${s2.target}, which is not there.`);
   }
-  entries.push(sunshineApps.buildEntry({ name: 'Clarity Desktop', phantomScript: scriptPath }));
+  entries.push(sunshineApps.buildEntry({ name: 'Clarity Desktop', prepScript: scriptPath }));
 
   const results = entries.map((e) => sunshineApps.upsert(doc, e));
   for (const r of results) {
@@ -290,6 +300,105 @@ function appsCmd(rest) {
   if (facts.sunshine.unitFound) {
     const r = restartUserService(facts.sunshine.unitName);
     console.log(`${facts.sunshine.unitName}  ${r.ok ? C.g + r.detail + C.x : C.r + r.detail + C.x}`);
+  }
+  return 0;
+}
+
+// Called by Sunshine around a session, through the small shell script in
+// ~/.local/share/clarity-stream. Everything that decides anything lives here
+// rather than in that script.
+function streamDisplayCmd(rest) {
+  const sd = require('../packages/core/stream-display');
+  const hypr = require('../packages/core/hypr');
+  const { enumerateOutputs } = require('../packages/core/outputs');
+
+  const action = rest.find((a) => !a.startsWith('--'));
+  const dry = rest.includes('--dry-run');
+  const num = (flag, fallback) => {
+    const i = rest.indexOf(flag);
+    return i === -1 ? fallback : Number(rest[i + 1]) || fallback;
+  };
+
+  const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const say = (m) => console.log(`${stamp()}  ${m}`);
+
+  const monitors = hypr.monitors();
+  if (!monitors) { say('the compositor did not answer; leaving the display alone'); return 1; }
+
+  if (action === 'stop') {
+    const saved = sd.readSaved();
+    if (!saved) { say('nothing to restore'); return 0; }
+    const sel = saved.description ? `desc:${saved.description}` : saved.connector;
+    const mode = `${saved.width}x${saved.height}@${Number(saved.refresh).toFixed(5)}`;
+    say(`restoring ${saved.connector} to ${mode}${dry ? ' (dry run)' : ''}`);
+    if (!dry) {
+      hypr.evalLua(`hl.monitor(${hypr.luaTable({
+        output: sel, mode, position: saved.position, scale: saved.scale, disabled: false
+      })})`);
+      sd.clearState();
+    }
+    return 0;
+  }
+
+  if (action !== 'start') {
+    console.error('usage: clarity-stream stream-display start|stop [--width N --height N --fps N]');
+    return 2;
+  }
+
+  const width = num('--width', 0);
+  const height = num('--height', 0);
+  const fps = num('--fps', 60);
+  if (!width || !height) { say('the client did not say what size it wanted; leaving the display alone'); return 0; }
+
+  // Which monitor gets streamed: whatever Sunshine is pointed at, so the
+  // resize and the capture can never disagree about the target.
+  const facts = probe();
+  const outs = enumerateOutputs(facts);
+  const idx = facts.sunshine.confRaw?.match(/^\s*output_name\s*=\s*(\d+)/m)?.[1];
+  const target = (idx !== undefined && outs.find((o) => String(o.index) === idx)) ?? outs.find((o) => o.monitor);
+  if (!target?.monitor) { say('no streamable monitor; leaving the display alone'); return 1; }
+
+  const live = monitors.find((m) => m.name === target.connector);
+  if (!live) { say(`${target.connector} is not being driven; leaving it alone`); return 1; }
+
+  const want = sd.chooseMode(live.availableModes, { width, height, fps });
+  if (!want) {
+    // Moving the desktop to "nearly" the requested size still makes Sunshine
+    // scale, and has disturbed everything for nothing.
+    say(`${live.name} has no ${width}x${height} mode; leaving it alone and letting Sunshine scale`);
+    return 0;
+  }
+  if (live.width === want.width && live.height === want.height &&
+      Math.abs(live.refreshRate - want.refresh) < 0.5) {
+    say(`${live.name} is already ${want.raw}; nothing to change`);
+    return 0;
+  }
+
+  // Recorded before anything changes, so the undo has something to restore
+  // even if the next step fails.
+  const state = {
+    connector: live.name,
+    description: live.description || null,
+    width: live.width, height: live.height, refresh: live.refreshRate,
+    position: `${live.x}x${live.y}`, scale: live.scale,
+    at: new Date().toISOString()
+  };
+  say(`${live.name}: ${live.width}x${live.height}@${live.refreshRate.toFixed(2)} -> ${want.raw}${dry ? ' (dry run)' : ''}`);
+  if (dry) return 0;
+
+  sd.saveState(state);
+  const sel = state.description ? `desc:${state.description}` : state.connector;
+  const r = hypr.evalLua(`hl.monitor(${hypr.luaTable({
+    output: sel, mode: `${want.width}x${want.height}@${want.refresh.toFixed(5)}`,
+    position: state.position, scale: state.scale, disabled: false
+  })})`);
+  if (!r.ok) {
+    say(`the compositor refused: ${r.output}`);
+    // The mode did not take, so there is nothing to undo, and leaving a state
+    // file behind would make the host app offer to restore something that was
+    // never changed.
+    sd.clearState();
+    return 1;
   }
   return 0;
 }
@@ -598,6 +707,7 @@ switch (cmd) {
   case 'fix': code = fixCmd(rest); break;
   case 'apps': code = appsCmd(rest); break;
   case 'firewall': code = firewallCmd(rest); break;
+  case 'stream-display': code = streamDisplayCmd(rest); break;
   case 'verify': code = verifyCmd(rest); break;
   case 'measure': code = measureCmd(rest); break;
   case 'phantom': code = phantomCmd(rest); break;
@@ -610,6 +720,8 @@ switch (cmd) {
   console.log('                       [--output NAME] [--no-service]');
   console.log('  apps [--apply]       publish the Moonlight app list [--prune-stock]');
   console.log('  firewall [--open]    can other machines reach this host at all');
+  console.log('  stream-display       resize the streamed display for a session');
+  console.log('                       start|stop, called by Sunshine around a stream');
   console.log('  verify [output]      measure real pixels, prove the capture is not black');
   console.log('  measure <image>      report whether a captured frame is black');
   console.log('  phantom [WxH[@Hz]]   plan the phantom stream display');

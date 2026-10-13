@@ -15,6 +15,8 @@ const ORDER = [
   'capture-aimed-at-idle-card',
   'headless-output-cannot-be-captured',
   'ports-blocked-by-firewall',
+  'display-left-resized',
+  'stream-resize-not-wired',
   'phantom-armed-but-absent',
   'output-not-pinned',
   'encoder-not-pinned-nvenc',
@@ -29,6 +31,9 @@ const ORDER = [
 function diagnose(facts) {
   const findings = [];
   for (const fault of FAULTS) {
+    // The phantom's problems are only problems for someone using the phantom.
+    // Under the resize strategy an armed-but-down phantom is simply a leftover.
+    if (fault.onlyWhenPhantom && (facts.settings?.strategy ?? 'resize') !== 'phantom') continue;
     let hit;
     try {
       hit = fault.detect(facts);

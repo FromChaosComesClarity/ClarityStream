@@ -73,16 +73,19 @@ function pruneStock(doc) {
   return removed;
 }
 
-// An entry that brings the phantom up before the app starts and takes it down
-// afterwards. That is what lets the phantom spend its idle life switched off,
-// holding no workspace and catching no stray pointer.
-function buildEntry({ name, cmd, imagePath, phantomScript, detached = false }) {
+// An entry, optionally carrying the step that runs around a session.
+//
+// Under the resize strategy that step sets the streamed monitor to whatever
+// resolution the client asked for and puts it back afterwards. Sunshine hands
+// it SUNSHINE_CLIENT_WIDTH, HEIGHT and FPS in the environment, which is the
+// only way the host can know what the client chose.
+function buildEntry({ name, cmd, imagePath, prepScript, detached = false }) {
   const entry = { name };
   if (imagePath) entry['image-path'] = imagePath;
-  if (phantomScript) {
+  if (prepScript) {
     entry['prep-cmd'] = [{
-      do: `${phantomScript} on`,
-      undo: `${phantomScript} off`
+      do: `${prepScript} start`,
+      undo: `${prepScript} stop`
     }];
   }
   if (detached) entry.detached = [cmd];

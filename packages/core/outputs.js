@@ -83,18 +83,34 @@ function indexForConnector(facts, connectorName) {
   return found ? found.index : null;
 }
 
-// The phantom wins whenever one exists. That is the entire reason it was
-// armed: streaming it leaves the desktop monitors alone and gives the client
-// exactly the resolution it asked for. Falling back to the biggest real
-// monitor would quietly undo the thing the user rebooted for.
+// Under the phantom strategy the phantom wins whenever one exists: that is
+// the entire reason it was armed, and falling back to a real monitor would
+// quietly undo the thing the user rebooted for.
+//
+// Under any other strategy a leftover phantom is not the target. Resizing
+// works on a real monitor, and streaming a disabled phantom is how you get a
+// black picture.
 //
 // Otherwise the biggest output by pixel count, which is almost always the
 // main display and the one a person means by "my monitor".
 function defaultOutput(facts) {
   const outs = enumerateOutputs(facts);
   if (!outs.length) return null;
-  const phantom = outs.find((o) => o.isPhantom);
-  if (phantom) return phantom;
+  const strategy = facts.settings?.strategy ?? 'resize';
+  const real = outs.filter((o) => !o.isPhantom);
+  if (strategy === 'phantom') {
+    const phantom = outs.find((o) => o.isPhantom);
+    if (phantom) return phantom;
+  } else if (real.length) {
+    // Never suggest a phantom when it is not the strategy in use.
+    const focused = real.find((o) => o.monitor?.focused);
+    if (focused) return focused;
+    return real.reduce((best, o) => {
+      const area = (o.monitor?.width ?? 0) * (o.monitor?.height ?? 0);
+      const bestArea = (best.monitor?.width ?? 0) * (best.monitor?.height ?? 0);
+      return area > bestArea ? o : best;
+    }, real[0]);
+  }
   const focused = outs.find((o) => o.monitor?.focused);
   if (focused) return focused;
   return outs.reduce((best, o) => {

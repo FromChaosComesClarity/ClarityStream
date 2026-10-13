@@ -280,10 +280,57 @@ const FAULTS = [
   },
 
   {
+    id: 'display-left-resized',
+    title: 'The desktop was left at a streaming resolution',
+    severity: SEVERITY.DEGRADED,
+    // The failure mode of resizing a real monitor: if the session ended
+    // without its undo running, the desktop stays at the client's resolution
+    // and the person in front of it has no idea why.
+    detect: (f) => {
+      const s = f.strandedResize;
+      if (!s) return null;
+      return {
+        evidence: `${s.connector} was ${s.was} before a stream started, and was never put back.`,
+        detail: 'A session ended without restoring it. Nothing is broken; the screen is simply ' +
+                'still at the size the client asked for.',
+        fix: { kind: 'restore-display', connector: s.connector, was: s.was }
+      };
+    }
+  },
+
+  {
+    id: 'stream-resize-not-wired',
+    title: 'Nothing will resize the display when a stream starts',
+    severity: SEVERITY.DEGRADED,
+    // Only meaningful under the resize strategy: the entries have to carry a
+    // prep-cmd or nothing happens and the client silently gets a scaled
+    // picture of the whole desktop.
+    detect: (f) => {
+      if (!f.sunshine.installed) return null;
+      if ((f.settings?.strategy ?? 'resize') !== 'resize') return null;
+      let doc;
+      try { doc = JSON.parse(require('node:fs').readFileSync(f.sunshine.appsPath, 'utf8')); }
+      catch { return null; }
+      const ours = (doc.apps ?? []).filter((a) => typeof a.name === 'string' && a.name.startsWith('Clarity'));
+      if (!ours.length) return null;
+      const wired = ours.filter((a) => JSON.stringify(a['prep-cmd'] ?? []).includes('stream-display'));
+      if (wired.length === ours.length) return null;
+      return {
+        evidence: `${ours.length - wired.length} of ${ours.length} Clarity entries have no resize step.`,
+        detail: 'Without it the client gets whatever size the monitor already is, scaled.',
+        fix: { kind: 'publish-apps' }
+      };
+    }
+  },
+
+  {
     id: 'phantom-not-armed',
-    title: 'The phantom stream display is not armed',
+    title: 'No phantom stream display',
     severity: SEVERITY.INFO,
     detect: (f) => {
+      // Only worth mentioning when the phantom is the chosen strategy. Under
+      // the default it is an alternative, not something missing.
+      if ((f.settings?.strategy ?? 'resize') !== 'phantom') return null;
       const forced = /drm\.edid_firmware=/.test(f.phantom.kernelCmdline ?? '');
       if (forced) return null;
       const card = displayCard(f);
@@ -334,6 +381,7 @@ const FAULTS = [
 
   {
     id: 'phantom-armed-but-absent',
+    onlyWhenPhantom: true,
     title: 'The phantom display is armed but the compositor does not have it up',
     severity: SEVERITY.BLOCKER,
     // Worth a blocker because of when Sunshine reads its configuration. It
@@ -372,6 +420,7 @@ const FAULTS = [
 
   {
     id: 'phantom-holds-a-user-workspace',
+    onlyWhenPhantom: true,
     title: 'The phantom display has taken one of your workspaces',
     severity: SEVERITY.DEGRADED,
     // Hyprland gives a new output the first free workspace. Arming a phantom
@@ -400,6 +449,7 @@ const FAULTS = [
 
   {
     id: 'phantom-touches-the-desktop',
+    onlyWhenPhantom: true,
     title: 'The phantom display is adjacent to a real monitor',
     severity: SEVERITY.DEGRADED,
     // Hyprland moves the pointer between monitors by adjacency, so a phantom
@@ -428,6 +478,7 @@ const FAULTS = [
 
   {
     id: 'phantom-not-parked-at-login',
+    onlyWhenPhantom: true,
     title: 'The phantom will come back unparked after a reboot',
     severity: SEVERITY.DEGRADED,
     // Parking is runtime state. Hyprland re-reads its config on every start,

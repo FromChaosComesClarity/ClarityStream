@@ -282,6 +282,8 @@ function probe() {
     compositor,
     sunshine: probeSunshine(),
     firewall: require('./firewall').detect(),
+    settings: require('./settings').read(),
+    strandedResize: require('./stream-display').strandedResize(),
     moonlight: probeMoonlight(),
     phantom: probePhantomSupport()
   };
