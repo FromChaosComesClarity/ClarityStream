@@ -71,3 +71,25 @@ test('an unscoped fix is still one rule per port', () => {
   const state = { kind: 'ufw', missing: [{ port: 47989, proto: 'tcp' }] };
   assert.deepStrictEqual(openCommands(state), [['ufw', 'allow', '47989/tcp']]);
 });
+
+test('IPv6 rules live in the ufw6 chain and must still count', () => {
+  // ufw writes IPv6 rules into ufw6-user-input. Matching only ufw-user-input
+  // reported every port as missing over IPv6 on a host where all of them were
+  // open: a false "closed" that shipped in 0.4.0.
+  const v6 = [
+    '-A ufw6-user-input -p tcp --dport 47989 -j ACCEPT',
+    '-A ufw6-user-input -p udp --dport 47998 -j ACCEPT'
+  ].join('\n');
+  const m = parseUfwRules(v6);
+  assert.ok(has(m, 'tcp', 47989), 'the ufw6 chain must be read');
+  assert.ok(has(m, 'udp', 47998));
+});
+
+test('a chain that is neither user-input chain is still ignored', () => {
+  const m = parseUfwRules([
+    '-A ufw-user-limit -p tcp --dport 47989 -j ACCEPT',
+    '-A ufw6-user-limit -p tcp --dport 47984 -j ACCEPT',
+    '-A ufw-before-input -p udp --dport 47998 -j ACCEPT'
+  ].join('\n'));
+  assert.strictEqual(m.size, 0);
+});

@@ -46,7 +46,11 @@ function parseUfwRules(text) {
   if (!text) return allowed;
 
   for (const line of text.split('\n')) {
-    if (!/^-A ufw-user-input /.test(line) || !/-j ACCEPT/.test(line)) continue;
+    // The IPv6 chain is ufw6-user-input, not ufw-user-input. Matching only
+    // the first reported every port as missing over IPv6 on a host where all
+    // of them were open, which is the false positive this whole project
+    // exists to avoid, and I shipped it.
+    if (!/^-A ufw6?-user-input /.test(line) || !/-j ACCEPT/.test(line)) continue;
     if (/\s-d\s/.test(line)) continue;                       // destination-scoped
     const proto = (/-p (tcp|udp)/.exec(line) || [])[1];
     if (!proto) continue;
