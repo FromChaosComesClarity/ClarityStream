@@ -104,4 +104,45 @@ async function unpairClient(uuid, creds) {
   return { ok: r.json?.status !== false, reason: r.json?.status === false ? 'Sunshine refused.' : null };
 }
 
-module.exports = { request, checkCredentials, submitPin, listClients, unpairClient, HOST, PORT };
+// What the host is doing, over plain HTTP on the streaming port. No
+// credentials: this is the same endpoint a client asks before connecting.
+function sessionState({ timeout = 4000 } = {}) {
+  return new Promise((resolve) => {
+    const http = require('node:http');
+    const req = http.get({
+      host: HOST, port: 47989,
+      path: '/serverinfo?uniqueid=0123456789ABCDEF',
+      timeout
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        const tag = (n) => (new RegExp(`<${n}[^>]*>([^<]*)</${n}>`).exec(data) || [])[1] ?? null;
+        const game = tag('currentgame');
+        resolve({
+          ok: true,
+          state: tag('state'),
+          busy: /BUSY/i.test(tag('state') ?? ''),
+          currentGameId: game && game !== '0' ? game : null
+        });
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, reason: 'timed out' }); });
+    req.on('error', (err) => resolve({ ok: false, reason: err.message }));
+  });
+}
+
+// Ends whatever session is running. Closing the client's window does not do
+// this: Sunshine keeps the session open and the host stays busy, refusing the
+// next connection until its own timeout gives up.
+async function closeSession(creds) {
+  const r = await request('POST', '/api/apps/close', creds);
+  if (r.status === 401) return { ok: false, reason: 'Sunshine rejected the credentials.' };
+  if (!r.ok) return { ok: false, reason: r.error ?? `Sunshine answered ${r.status}.` };
+  return { ok: r.json?.status !== false, reason: r.json?.status === false ? 'Sunshine refused.' : null };
+}
+
+module.exports = {
+  request, checkCredentials, submitPin, listClients, unpairClient,
+  sessionState, closeSession, HOST, PORT
+};

@@ -114,11 +114,18 @@ function streamCommand(address, appName, opts = {}) {
   return ['moonlight', ...args];
 }
 
+// Ends the session on the host. Closing the client's window does not: the
+// host stays busy and refuses the next connection until its own timeout gives
+// up, which is long enough to look like a fault.
+function quitCommand(address) {
+  return ['moonlight', 'quit', address];
+}
+
 function moonlightPresent() {
   return Boolean(which('moonlight'));
 }
 
 module.exports = {
   serverInfo, readMoonlightHosts, randomPin, pairCommand, streamCommand,
-  moonlightPresent, MOONLIGHT_CONF
+  quitCommand, moonlightPresent, MOONLIGHT_CONF
 };

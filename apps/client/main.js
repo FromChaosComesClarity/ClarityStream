@@ -143,6 +143,13 @@ ipcMain.handle('launch', (_e, { address, appName, settings }) => {
   return { ok: true, command: [cmd, ...args].join(' ') };
 });
 
+ipcMain.handle('quit', (_e, { address }) => {
+  const [cmd, ...args] = hostLink.quitCommand(address);
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+  child.unref();
+  return { ok: true, command: [cmd, ...args].join(' ') };
+});
+
 ipcMain.handle('open:moonlight', () => {
   const child = spawn('moonlight', [], { detached: true, stdio: 'ignore' });
   child.unref();

@@ -308,17 +308,16 @@ const FAULTS = [
     detect: (f) => {
       if (!f.sunshine.installed) return null;
       if ((f.settings?.strategy ?? 'resize') !== 'resize') return null;
-      let doc;
-      try { doc = JSON.parse(require('node:fs').readFileSync(f.sunshine.appsPath, 'utf8')); }
-      catch { return null; }
-      const ours = (doc.apps ?? []).filter((a) => typeof a.name === 'string' && a.name.startsWith('Clarity'));
-      if (!ours.length) return null;
-      const wired = ours.filter((a) => JSON.stringify(a['prep-cmd'] ?? []).includes('stream-display'));
-      if (wired.length === ours.length) return null;
+      const sd = require('./stream-display');
+      const current = (f.sunshine.confRaw ?? '').match(/^\s*global_prep_cmd\s*=\s*(.+?)\s*$/m)?.[1] ?? null;
+      if (sd.globalPrepHasOurs(current, sd.SCRIPT_PATH)) return null;
       return {
-        evidence: `${ours.length - wired.length} of ${ours.length} Clarity entries have no resize step.`,
-        detail: 'Without it the client gets whatever size the monitor already is, scaled.',
-        fix: { kind: 'publish-apps' }
+        evidence: current
+          ? 'Sunshine runs a global prep command, but not the one that resizes the display.'
+          : 'Sunshine has no global prep command, so nothing resizes the display when a stream starts.',
+        detail: 'It has to be global rather than per-app: a client that picks one of Sunshine\u2019s ' +
+                'own tiles would otherwise get the monitor at whatever size it already is.',
+        fix: { kind: 'wire-resize' }
       };
     }
   },
