@@ -472,3 +472,36 @@ that restarting will not do.
 
 It reports unknown rather than guessing when the compositor cannot be
 reached, when the log cannot be read, and when Sunshine has never started.
+
+## A postscript on undoing it
+
+`packaging/remove-phantom.sh` ran on this machine and its first version named
+the wrong rebuild command.
+
+```
+==> ERROR: No presets found in /etc/mkinitcpio.d
+==> WARNING: This does not update Limine boot entries.
+    Use 'limine-mkinitcpio' or 'limine-update' instead.
+```
+
+`/etc/mkinitcpio.d` is empty here. `/etc/limine-entry-tool.d/omarchy-uki.conf`
+sets `ENABLE_UKI=yes`, overriding the `ENABLE_UKI=no` in the shipped
+`limine-entry-tool.conf`, so the boot image is a unified kernel image built by
+`limine-mkinitcpio` from the `limine-mkinitcpio-hook` package. That one
+command builds the image **and** updates the boot entries, so the separate
+`limine-update` the old plan ran afterwards was redundant.
+
+The inherited plan had carried `mkinitcpio -P` followed by `limine-update`
+since the phantom was first armed. It had worked, because arming happened
+through a path where something else had already generated the presets. Undoing
+it was the first time the command ran on its own, and the assumption showed.
+
+The script now tests for the UKI case and picks `limine-mkinitcpio`.
+
+Which made the allowlist question concrete: the helper still permitted
+`mkinitcpio -P`, `limine-update`, `bootctl update` and
+`grub-mkconfig`, and nothing in the engine emitted any of them any more, nor
+`remove-file`. Four ways to rebuild a stranger's boot image, reachable by no
+caller. They are gone, with tests that refuse all five commands and both file
+step kinds by name. The helper opens ports and sets a capability, and that is
+the whole of what it can do.

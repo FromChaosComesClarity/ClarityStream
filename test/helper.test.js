@@ -24,44 +24,49 @@ function runPlan(plan) {
   }
 }
 
-const legalRemove = {
-  kind: 'remove-file',
-  path: '/lib/firmware/edid/clarity-stream-DP-3.bin'
-};
-
 test('a legitimate plan passes validation', () => {
-  const r = runPlan({ steps: [legalRemove, { kind: 'run', argv: ['mkinitcpio', '-P'] }] });
+  const r = runPlan({ steps: [{ kind: 'run', argv: ['ufw', 'allow', '47984/tcp'] }] });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /Dry run: nothing was changed/);
 });
 
-// The phantom display was the only thing that needed root to WRITE a file.
-// With it gone the step kind is gone, and that has to stay gone: a helper
-// that can write anywhere as root is the worst thing in this repository.
-test('writing a file is refused outright, whatever the path', () => {
-  for (const p of [
+// The phantom display was the only thing that needed root to touch a file or
+// the boot path. With it gone those step kinds are gone rather than merely
+// emptied of legal targets, and they have to stay gone: this helper runs as
+// root, and the smallest thing it can do is the best thing it can do.
+test('touching a file is refused outright, whatever the path', () => {
+  const paths = [
     '/lib/firmware/edid/clarity-stream-DP-3.bin',   // formerly legal
     '/etc/mkinitcpio.conf.d/clarity-stream.conf',   // formerly legal
+    '/etc/limine-entry-tool.d/clarity-stream.conf', // formerly legal
     '/etc/passwd'
-  ]) {
-    const r = runPlan({ steps: [{ kind: 'write-file', path: p, base64: Buffer.alloc(8).toString('base64') }] });
-    assert.notStrictEqual(r.code, 0, `${p} was NOT refused`);
-    assert.match(r.stderr, /Refused|refusing|unknown step kind/, `${p}: ${r.stderr}`);
+  ];
+  for (const p of paths) {
+    for (const kind of ['write-file', 'remove-file']) {
+      const step = kind === 'write-file'
+        ? { kind, path: p, base64: Buffer.alloc(8).toString('base64') }
+        : { kind, path: p };
+      const r = runPlan({ steps: [step] });
+      assert.notStrictEqual(r.code, 0, `${kind} ${p} was NOT refused`);
+      assert.match(r.stderr, /Refused|refusing|unknown step kind/, `${kind} ${p}: ${r.stderr}`);
+    }
   }
 });
 
-test('removing outside the allowlist is refused', () => {
-  for (const p of [
-    '/etc/passwd',
-    '/etc/sudoers.d/clarity-stream',
-    '/lib/firmware/edid/../../../etc/shadow',
-    '/etc/mkinitcpio.conf',
-    '/boot/vmlinuz-linux',
-    '/lib/firmware/edid/somebody-else.bin'
+test('the boot path is refused outright', () => {
+  // These four were legal while the phantom existed. Nothing emits them now,
+  // and an unreachable way to rebuild someone's initramfs as root is still a
+  // way to rebuild someone's initramfs as root.
+  for (const argv of [
+    ['mkinitcpio', '-P'],
+    ['limine-update'],
+    ['limine-mkinitcpio'],
+    ['bootctl', 'update'],
+    ['grub-mkconfig', '-o', '/boot/grub/grub.cfg']
   ]) {
-    const r = runPlan({ steps: [{ ...legalRemove, path: p }] });
-    assert.notStrictEqual(r.code, 0, `${p} was NOT refused`);
-    assert.match(r.stderr, /Refused|refusing/, `${p}: ${r.stderr}`);
+    const r = runPlan({ steps: [{ kind: 'run', argv }] });
+    assert.notStrictEqual(r.code, 0, `${argv.join(' ')} was NOT refused`);
+    assert.match(r.stderr, /Refused|refusing/, `${argv.join(' ')}: ${r.stderr}`);
   }
 });
 
@@ -93,7 +98,8 @@ test('capabilities other than the ones KMS needs are refused', () => {
 
 test('one illegal step invalidates the whole plan', () => {
   // The legal half must not run just because it came first.
-  const r = runPlan({ steps: [legalRemove, { kind: 'run', argv: ['bash', '-c', 'id'] }] });
+  const r = runPlan({ steps: [{ kind: 'run', argv: ['ufw', 'allow', '47984/tcp'] },
+                              { kind: 'run', argv: ['bash', '-c', 'id'] }] });
   assert.notStrictEqual(r.code, 0);
   assert.match(r.stderr, /refusing to run/);
 });

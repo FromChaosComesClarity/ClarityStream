@@ -43,9 +43,8 @@ Everything else here is an AppImage, and this is the one that cannot be,
 for a reason that is specific rather than aesthetic.
 
 Clarity Stream has one piece that must live at a **stable, root-owned path**:
-the privileged helper, which opens firewall ports, grants `cap_sys_admin` to
-the Sunshine binary, and removes the files an older version left behind for a
-phantom display.
+the privileged helper, which opens firewall ports and grants `cap_sys_admin`
+to the Sunshine binary. That is all it can do.
 
 An AppImage mounts itself at `/tmp/.mount_XXXXXX`, and that path is different
 on every launch. A unit file or a sudoers rule naming it is invalid by the
@@ -63,7 +62,15 @@ root, mode 755, at a path that does not move.
 drop-in and the initramfs drop-in, rebuilds the initramfs and regenerates the
 boot entry. It is a plain script run with `sudo` rather than a helper plan,
 because it is a one-time migration and reads better as something you can see
-all of before running it. The helper still refuses every path but those three.
+all of before running it. The helper refuses it outright: it cannot delete a
+file or rebuild an initramfs, and that is the point of running this as a
+visible script instead.
+
+It picks its rebuild command rather than assuming one. On a system building a
+unified kernel image, `/etc/mkinitcpio.d` is empty and `mkinitcpio -P` fails
+with `No presets found`; `limine-mkinitcpio` is what builds the image and
+updates the boot entries together. Measured, after the first version of the
+script named the wrong one.
 
 ## What the package does not do
 

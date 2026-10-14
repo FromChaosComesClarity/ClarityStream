@@ -31,12 +31,26 @@ echo
 say "Rebuilding the initramfs so it no longer carries the EDID."
 say "This takes a minute. Full output below."
 echo
-mkinitcpio -P || { echo; say "mkinitcpio failed. STOP: do not reboot. Report the output above."; exit 1; }
 
-echo
-say "Regenerating the boot entry so the kernel parameters are gone."
-echo
-limine-update || { echo; say "limine-update failed. STOP: do not reboot. Report the output above."; exit 1; }
+# Which rebuild command is right depends on how the boot image is built, and
+# guessing costs a boot. Measured on the development machine: with
+# ENABLE_UKI=yes, /etc/mkinitcpio.d is empty, `mkinitcpio -P` errors with
+# "No presets found", and limine-mkinitcpio is what builds the UKI and
+# updates the boot entries in one step. Asking mkinitcpio first would prompt
+# the user to run limine-mkinitcpio anyway.
+if [ -x /usr/bin/limine-mkinitcpio ] && \
+   grep -qs 'ENABLE_UKI=yes' /etc/limine-entry-tool.conf /etc/limine-entry-tool.d/*.conf; then
+  say "This system builds a unified kernel image, so limine-mkinitcpio does both"
+  say "the initramfs and the boot entries."
+  echo
+  limine-mkinitcpio || { echo; say "limine-mkinitcpio failed. STOP: do not reboot. Report the output above."; exit 1; }
+else
+  mkinitcpio -P || { echo; say "mkinitcpio failed. STOP: do not reboot. Report the output above."; exit 1; }
+  echo
+  say "Regenerating the boot entry so the kernel parameters are gone."
+  echo
+  limine-update || { echo; say "limine-update failed. STOP: do not reboot. Report the output above."; exit 1; }
+fi
 
 echo
 say "Checking the result."

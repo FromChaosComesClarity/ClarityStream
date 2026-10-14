@@ -4,6 +4,11 @@
 // root. It takes a plan produced by the engine, checks every step against an
 // allowlist, prints exactly what it is about to do, and does only that.
 //
+// Two things only: open Sunshine's ports on the firewall, and grant the
+// Sunshine binary the capability KMS capture needs. It cannot write a file,
+// delete a file, or touch the boot path. Nothing it runs is assembled from
+// caller input.
+//
 // The engine cannot ask this to do anything the allowlist does not already
 // permit. That is deliberate: the unprivileged side builds plans, and a bug
 // there should not become a root exploit here. Paths are resolved and
@@ -42,21 +47,6 @@ function log(text) {
   try { fs.appendFileSync(logFile, text.endsWith('\n') ? text : `${text}\n`); } catch { /* ignore */ }
 }
 
-// Files this helper may delete. Each is owned by Clarity Stream: deleting any
-// of them undoes what it did, and none belongs to a package.
-//
-// Only removals remain. Clarity Stream used to synthesise an EDID and add
-// kernel parameters so an unused connector could be forced on as a stream
-// display. That is gone, and these exist so a host still carrying one can be
-// cleaned up. There is no longer anything this helper may write.
-const REMOVABLE = [
-  /^\/lib\/firmware\/edid\/clarity-stream-[A-Za-z0-9-]+\.bin$/,
-  /^\/usr\/lib\/firmware\/edid\/clarity-stream-[A-Za-z0-9-]+\.bin$/,
-  /^\/etc\/mkinitcpio\.conf\.d\/clarity-stream\.conf$/,
-  /^\/etc\/limine-entry-tool\.d\/clarity-stream\.conf$/,
-  /^\/etc\/default\/grub\.d\/clarity-stream\.cfg$/
-];
-
 // Sunshine's documented ports, and only those. 47990 is the web interface and
 // is deliberately absent: it is the administrative surface, Moonlight never
 // touches it, and Clarity Stream reaches it over loopback.
@@ -69,10 +59,6 @@ const STREAM_PORTS = [
 // The firewall entries are enumerated rather than pattern-matched, so there
 // is no argument a caller can supply that opens a port not on this list.
 const RUNNABLE = [
-  ['mkinitcpio', '-P'],
-  ['limine-update'],
-  ['bootctl', 'update'],
-  ['grub-mkconfig', '-o', '/boot/grub/grub.cfg'],
   ...STREAM_PORTS.map(([p, proto]) => ['ufw', 'allow', `${p}/${proto}`]),
   ...STREAM_PORTS.map(([p, proto]) => ['firewall-cmd', '--permanent', `--add-port=${p}/${proto}`]),
   ['firewall-cmd', '--reload']
@@ -80,14 +66,6 @@ const RUNNABLE = [
 
 // setcap is allowed only onto a real binary, and only with these capabilities.
 const SETCAP_ALLOWED = new Set(['cap_sys_admin,cap_sys_nice+p', 'cap_sys_admin+p']);
-
-function allowedPath(p) {
-  const resolved = path.resolve(p);
-  // Reject anything that resolves somewhere other than where it claims, which
-  // is how a symlink would be used to escape the allowlist.
-  if (resolved !== p) return false;
-  return REMOVABLE.some((re) => re.test(resolved));
-}
 
 // The scoped form cannot be enumerated, because the network and the list of
 // ports both vary. It is validated by shape instead, and every port in it has
@@ -118,7 +96,6 @@ function allowedRun(argv) {
 
 function describe(step) {
   switch (step.kind) {
-    case 'remove-file': return `remove   ${step.path}`;
     case 'run': return `run      ${step.argv.join(' ')}`;
     case 'setcap': return `setcap   ${step.caps} ${step.path}`;
     default: return `UNKNOWN  ${JSON.stringify(step)}`;
@@ -127,9 +104,6 @@ function describe(step) {
 
 function validate(step) {
   switch (step.kind) {
-    case 'remove-file':
-      if (!allowedPath(step.path)) return `refusing to remove ${step.path}: not a Clarity Stream file`;
-      return null;
     case 'run':
       if (!Array.isArray(step.argv) || !allowedRun(step.argv)) return `refusing to run ${JSON.stringify(step.argv)}`;
       return null;
@@ -144,10 +118,6 @@ function validate(step) {
 
 function run(step) {
   switch (step.kind) {
-    case 'remove-file':
-      if (!fs.existsSync(step.path)) return 'already absent';
-      fs.unlinkSync(step.path);
-      return 'removed';
     case 'run': {
       const out = execFileSync(step.argv[0], step.argv.slice(1), {
         encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 600000

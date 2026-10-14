@@ -27,12 +27,16 @@ apps/client/          Electron client app
 ## Three rules the engine follows
 
 **The engine never escalates.** Anything needing root comes back as a
-declarative plan: a list of `remove-file`, `run` and `setcap` steps. The UI
-shows the plan in full, the user approves it, and one privileged helper
-executes it. Nothing shells out to `sudo` mid-diagnosis, and nothing is
-modified as a side effect of looking. The helper cannot write a file at all:
-the phantom display was the only thing that needed that, and the step kind
-went with it.
+declarative plan: a list of `run` and `setcap` steps. The UI shows the plan in
+full, the user approves it, and one privileged helper executes it. Nothing
+shells out to `sudo` mid-diagnosis, and nothing is modified as a side effect
+of looking.
+
+The helper does two things: open Sunshine's ports, and grant the Sunshine
+binary `cap_sys_admin`. It cannot write a file, delete a file, or touch the
+boot path. The phantom display was the only thing that needed any of that, and
+those step kinds went with it rather than staying behind as an allowlist with
+nothing legal in it. Dead root capability is still root capability.
 
 **Nothing the user owns gets clobbered.** `sunshine.conf` is patched line by
 line, preserving comments, ordering and every key we do not recognise, with a
