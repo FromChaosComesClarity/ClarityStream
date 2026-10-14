@@ -20,12 +20,12 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
-// Commands here rebuild an initramfs and a boot entry. Keeping only the last
-// line of their output, which is what this did at first, throws away the part
-// that says whether the build actually succeeded: a run of `mkinitcpio -P`
-// reported "Updated: /boot/limine.conf", which is a hook's message, not
-// mkinitcpio's own. Everything goes to a log, and only a summary to the
-// terminal.
+// Everything a command prints goes to a log, and only a summary to the
+// terminal. Keeping just the last line, which is what this did at first,
+// throws away the part that says whether the command actually did anything:
+// a firewall rule that was already present and one that was just added both
+// end with a cheerful line, and `ufw` says "Skipping adding existing rule"
+// above it rather than instead of it.
 const LOG_DIR = '/var/log/clarity-stream';
 let logFile = null;
 
@@ -125,7 +125,7 @@ function run(step) {
       log(`\n$ ${step.argv.join(' ')}\n${out}`);
       const lines = out.trim().split('\n').filter((l) => l.trim());
       // Surface anything that looks like trouble even on a zero exit status,
-      // because mkinitcpio warns and succeeds.
+      // because ufw and firewall-cmd both warn and succeed.
       const warnings = lines.filter((l) => /\b(warning|error|failed|cannot|missing)\b/i.test(l));
       if (warnings.length) {
         return `ok, with ${warnings.length} warning${warnings.length === 1 ? '' : 's'}:\n` +
