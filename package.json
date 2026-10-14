@@ -10,7 +10,7 @@
   "scripts": {
     "doctor": "node bin/clarity-stream doctor",
     "probe": "node bin/clarity-stream probe",
-    "test": "node --test test/",
+    "test": "node --test test/*.test.js",
     "start": "electron .",
     "start:dev": "electron . --dev",
     "start:client": "electron apps/client/main.js",
