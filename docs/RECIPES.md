@@ -29,13 +29,11 @@ The two rules are Clarity's two rules:
 | `headless-output-cannot-be-captured` | blocker | `output_name` points at a `HEADLESS-*` output, which has no CRTC for KMS to read. |
 | `nvidia-modeset-disabled` | blocker | No DRM modesetting, so there is no scanout buffer at all. |
 | `service-not-running-as-user` | blocker | Sunshine not active as a user unit. A system unit has no seat and no Wayland socket. |
-| `output-not-pinned` | degraded | Sunshine is streaming a display you did not choose. `output_name` is an index for KMS capture, not a connector name, so the obvious value does nothing. |
+| `capture-bound-to-undriven-connector` | blocker | Sunshine's own log names a DRM connector the compositor is not driving. Usually a port the kernel left enabled after a monitor was unplugged: Sunshine resolves its target at service start and keeps choosing it, and a restart does not clear it. |
+| `output-pin-is-stale` | blocker | `output_name` names an index that is not a driven display. The index is positional, so unplugging a monitor renumbers everything below it and the pin silently comes to mean a different screen, or none. |
+| `output-pinned-with-one-display` | degraded | `output_name` is set on a machine with one display, where it cannot help and can only break later when a monitor is added or removed. |
+| `output-not-pinned` | degraded | Two or more displays and Sunshine is streaming one you did not choose. `output_name` is an index for KMS capture, not a connector name, so the obvious value does nothing. |
 | `encoder-not-pinned-nvenc` | degraded | NVENC present but `encoder` unset, so encoding may land on the CPU. |
-| `phantom-not-armed` | info | No phantom display, so streaming has to use a real monitor at its real resolution. |
-| `phantom-armed-but-absent` | blocker | The EDID override is active but the compositor is not driving the output. Sunshine binds its capture output at service start, so this breaks every launch. |
-| `phantom-holds-a-user-workspace` | degraded | Hyprland gave the phantom one of your workspaces; switching to it sends windows to a screen that is not there. |
-| `phantom-touches-the-desktop` | degraded | The phantom is flush against a real monitor, so the pointer slides onto it. |
-| `phantom-not-parked-at-login` | degraded | Parking is runtime state and will be gone after a reboot. |
 | `nvenc-without-cuda` | degraded | The Sunshine build links no CUDA, so frames go GPU to RAM to GPU instead of staying in VRAM. No setting fixes it. |
 | `moonlight-missing` | info | Only matters if this machine is also a client. |
 
@@ -59,3 +57,21 @@ A new Recipe needs four things, and the fourth is the one people skip:
    shows why rather than just what.
 4. A position in `ORDER`, and a measurement proving the fix works on a real
    machine. Both directions: broken before, working after.
+
+## Removed in 0.7.0
+
+Five recipes went with the phantom display, which Clarity Stream no longer
+builds:
+
+`phantom-not-armed`, `phantom-armed-but-absent`,
+`phantom-holds-a-user-workspace`, `phantom-touches-the-desktop`,
+`phantom-not-parked-at-login`.
+
+The phantom was a spare connector forced on with a synthesised EDID, so a
+client got a screen of its own and the real desktop was untouched. It worked,
+and it cost a kernel parameter, a reboot, and a compositor that kept forming
+opinions about the extra output: it took a workspace, it sat adjacent to the
+desktop so the pointer slid onto it, and a bar panel rewriting the monitor
+config put it back where it had been. Resizing the real display for the
+duration of a session does the same job with nothing installed and nothing to
+undo at boot. See `stream-display.js`.

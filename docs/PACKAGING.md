@@ -11,7 +11,7 @@ That produces three packages in `dist/pkg/`:
 | package | size | contents |
 | --- | --- | --- |
 | `clarity-stream-common` | ~107 MB | `/opt/clarity-stream/{app,electron}`: the engine, both UIs, and the Electron runtime |
-| `clarity-stream` | tiny | the host: `clarity-stream` (CLI), `clarity-stream-host` (UI), the root helper, the phantom unit, a desktop entry |
+| `clarity-stream` | tiny | the host: `clarity-stream` (CLI), `clarity-stream-host` (UI), the root helper, a desktop entry |
 | `clarity-stream-client` | tiny | the client: `clarity-stream-client`, a desktop entry |
 
 ```
@@ -42,12 +42,10 @@ A machine that is both host and client installs one copy of it.
 Everything else here is an AppImage, and this is the one that cannot be,
 for a reason that is specific rather than aesthetic.
 
-Clarity Stream has two pieces that must live at **stable, root-owned paths**:
-
-- The privileged helper, which writes an EDID into `/lib/firmware/edid`,
-  rebuilds the initramfs and regenerates the boot entry.
-- The systemd user unit that parks the phantom display at login, which names
-  the CLI by absolute path.
+Clarity Stream has one piece that must live at a **stable, root-owned path**:
+the privileged helper, which opens firewall ports, grants `cap_sys_admin` to
+the Sunshine binary, and removes the files an older version left behind for a
+phantom display.
 
 An AppImage mounts itself at `/tmp/.mount_XXXXXX`, and that path is different
 on every launch. A unit file or a sudoers rule naming it is invalid by the
@@ -59,17 +57,19 @@ it is not worth the convenience.
 A native package puts the helper at `/usr/lib/clarity-stream/helper`, owned by
 root, mode 755, at a path that does not move.
 
+## Undoing a phantom display from 0.6.x
+
+`packaging/remove-phantom.sh` removes the generated EDID, the bootloader
+drop-in and the initramfs drop-in, rebuilds the initramfs and regenerates the
+boot entry. It is a plain script run with `sudo` rather than a helper plan,
+because it is a one-time migration and reads better as something you can see
+all of before running it. The helper still refuses every path but those three.
+
 ## What the package does not do
 
 It does not enable anything on its own. Installing it changes no
 configuration, starts no service and touches no monitor. The host has to be
 told to, from its window or from `clarity-stream fix --apply`.
-
-The phantom unit is shipped but not enabled, because arming a phantom display
-is a decision with a reboot attached. `clarity-stream phantom --install-service`
-enables the packaged unit when it finds one, and removes any unit left in
-`~/.config/systemd/user` by a development checkout, since a user unit shadows
-the packaged one and would keep pointing at a directory that may be gone.
 
 ## Releasing
 

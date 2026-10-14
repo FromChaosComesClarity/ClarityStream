@@ -8,8 +8,7 @@
 //
 // The cost is honest and unavoidable: the desktop visibly reflows, twice, and
 // anything laid out by pixel position moves. The gain is that the client gets
-// its own resolution without a phantom display, a kernel parameter or a
-// reboot.
+// its own resolution without a kernel parameter or a reboot.
 //
 // Two things this has to get right or it is worse than useless:
 //

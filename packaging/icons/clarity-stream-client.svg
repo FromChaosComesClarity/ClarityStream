@@ -6,7 +6,7 @@
     </linearGradient>
   </defs>
   <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#g)"/>
-  <!-- A display with a signal coming off it: the phantom, streaming. -->
+  <!-- A display with a signal coming off it: streaming. -->
   <rect x="30" y="38" width="52" height="36" rx="5" fill="#11131a" opacity="0.92"/>
   <path d="M90 50a18 18 0 0 1 0 26" stroke="#11131a" stroke-width="7"
         stroke-linecap="round" fill="none" opacity="0.92"/>

@@ -9,7 +9,7 @@ const { diagnose } = require('../packages/core/diagnose');
 
 const byId = (id) => FAULTS.find((f) => f.id === id);
 
-// A healthy NVIDIA host with a parked phantom, as this machine ended up.
+// A healthy NVIDIA host, as this machine ended up.
 function healthy() {
   return {
     gpus: [
@@ -18,9 +18,9 @@ function healthy() {
         card: 'card1', driver: 'nvidia', renderNode: '/dev/dri/renderD128', connectedCount: 3,
         spareConnectors: [],
         connectors: [
-          { name: 'DP-1', sysfs: 'card1-DP-1', status: 'connected', isWriteback: false },
-          { name: 'DP-2', sysfs: 'card1-DP-2', status: 'connected', isWriteback: false },
-          { name: 'DP-3', sysfs: 'card1-DP-3', status: 'connected', isWriteback: false }
+          { name: 'DP-1', sysfs: 'card1-DP-1', connectorId: 826, status: 'connected', enabled: 'enabled', isWriteback: false },
+          { name: 'DP-2', sysfs: 'card1-DP-2', connectorId: 830, status: 'connected', enabled: 'enabled', isWriteback: false },
+          { name: 'DP-3', sysfs: 'card1-DP-3', connectorId: 834, status: 'connected', enabled: 'enabled', isWriteback: false }
         ]
       }
     ],
@@ -39,19 +39,15 @@ function healthy() {
       capabilities: '/usr/bin/sunshine cap_sys_admin,cap_sys_nice=p',
       unitFound: true, unitName: 'app-dev.lizardbyte.app.Sunshine.service',
       unitEnabled: 'enabled', unitActive: 'active', cudaLinked: true,
-      confRaw: 'capture = kms\nadapter_name = /dev/dri/renderD128\nencoder = nvenc\noutput_name = 2\n'
+      confRaw: 'capture = kms\nadapter_name = /dev/dri/renderD128\nencoder = nvenc\noutput_name = 2\n',
+      logReadable: true, boundConnectorId: 830, kmsListEmpty: false
     },
-    moonlight: { installed: true },
-    phantom: {
-      kernelCmdline: 'root=/dev/x drm.edid_firmware=DP-3:edid/clarity-stream-DP-3.bin video=DP-3:e',
-      parkService: { installed: true, enabled: 'enabled', active: 'active' }
-    }
+    moonlight: { installed: true }
   };
 }
 
-// enumerateOutputs reads real sysfs for connector ids and the phantom EDID,
-// so these cases assert on faults that do not depend on it where possible,
-// and tolerate it reporting no phantom where they do.
+// enumerateOutputs reads real sysfs for connector ids, so these cases assert
+// on faults that do not depend on it where possible.
 test('a healthy host reports no blockers', () => {
   const r = diagnose(healthy());
   assert.strictEqual(r.blockers.length, 0, JSON.stringify(r.blockers.map((b) => b.id)));
@@ -121,22 +117,54 @@ test('NVENC without CUDA is reported, and a CUDA build is not', () => {
   assert.strictEqual(byId('nvenc-without-cuda').detect(f), null);
 });
 
-test('a phantom that will come back unparked is caught', () => {
+test('capture bound to a port with nothing on it is a blocker', () => {
+  // Measured on the development machine: a monitor was unplugged, the kernel
+  // left its connector disconnected but still enabled, and Sunshine kept
+  // binding it across restarts. Config alone cannot see this; only the log
+  // says which port Sunshine actually chose.
   const f = healthy();
-  f.phantom.parkService = { installed: false, enabled: 'not-found' };
-  const hit = byId('phantom-not-parked-at-login').detect(f);
-  assert.ok(hit);
-  assert.match(hit.detail, /re-applies its config/);
+  f.sunshine.boundConnectorId = 826;                   // DP-1
+  f.compositor.monitors = [{ name: 'DP-2', width: 3440, height: 1440, scale: 1, x: 0, y: 0, refresh: 60 }];
+  f.gpus[1].connectors[0].status = 'disconnected';
 
-  f.phantom.parkService = { installed: true, enabled: 'enabled' };
-  assert.strictEqual(byId('phantom-not-parked-at-login').detect(f), null);
+  const hit = byId('capture-bound-to-undriven-connector').detect(f);
+  assert.ok(hit, 'binding an unplugged port is a blocker');
+  assert.match(hit.evidence, /826 \(DP-1\)/);
+  assert.match(hit.evidence, /disconnected but still enabled/);
+  assert.match(hit.evidence, /driving DP-2/);
+  assert.match(hit.detail, /Rebooting clears it/);
+  assert.strictEqual(hit.fix.kind, 'reboot-to-clear-connectors');
+  assert.strictEqual(diagnose(f).streamable, false);
 });
 
-test('no phantom armed means the park faults stay quiet', () => {
+test('capture bound to a display the compositor is driving says nothing', () => {
   const f = healthy();
-  f.phantom.kernelCmdline = 'root=/dev/x';
-  assert.strictEqual(byId('phantom-armed-but-absent').detect(f), null);
-  assert.strictEqual(byId('phantom-not-parked-at-login').detect(f), null);
+  f.sunshine.boundConnectorId = 830;                   // DP-2, which is driven
+  assert.strictEqual(byId('capture-bound-to-undriven-connector').detect(f), null);
+});
+
+test('a Sunshine that has never started is not reported as mis-bound', () => {
+  // No log, or a log with no connector line, is not evidence of a fault. It
+  // is the absence of evidence, and those are reported differently.
+  const f = healthy();
+  f.sunshine.boundConnectorId = null;
+  assert.strictEqual(byId('capture-bound-to-undriven-connector').detect(f), null);
+
+  const g = healthy();
+  g.sunshine.logReadable = false;
+  g.sunshine.boundConnectorId = null;
+  assert.strictEqual(byId('capture-bound-to-undriven-connector').detect(g), null);
+});
+
+test('an unreachable compositor cannot confirm the bound port either', () => {
+  const f = healthy();
+  f.sunshine.boundConnectorId = 826;
+  f.compositor.monitors = null;
+  const hit = byId('capture-bound-to-undriven-connector').detect(f);
+  assert.ok(hit);
+  assert.strictEqual(hit.unknown, true);
+  assert.match(hit.title, /could not check/i);
+  assert.ok(!diagnose(f).blockers.map((b) => b.id).includes('capture-bound-to-undriven-connector'));
 });
 
 test('fixes are ordered by dependency: the capability precedes the capture switch', () => {
@@ -157,35 +185,28 @@ test('a detector that throws is reported, not swallowed', () => {
 });
 
 test('a compositor that cannot be reached is unknown, not a fault', () => {
-  // Run outside the graphical session, hyprctl answers nothing. Reporting
-  // that as "the phantom is down" is a false blocker, and the whole point of
-  // this project is that a confident wrong answer is the expensive failure.
+  // Run outside the graphical session and hyprctl answers nothing, so every
+  // output looks undriven. Reporting a healthy pin as stale is a false
+  // blocker, and the whole point of this project is that a confident wrong
+  // answer is the expensive failure.
   const f = healthy();
-  f.settings = { strategy: 'phantom' };
   f.compositor.monitors = null;
   f.compositor.workspaces = null;
 
-  const absent = byId('phantom-armed-but-absent').detect(f);
-  assert.ok(absent, 'it should still say something');
-  assert.strictEqual(absent.unknown, true);
-  assert.strictEqual(absent.fix.kind, 'none');
-  assert.match(absent.evidence, /did not answer/i);
-  assert.match(absent.title, /could not check/i);
-
-  assert.strictEqual(byId('phantom-holds-a-user-workspace').detect(f), null);
-  assert.strictEqual(byId('phantom-touches-the-desktop').detect(f), null);
+  const hit = byId('output-pin-is-stale').detect(f);
+  assert.ok(hit, 'it should still say something');
+  assert.strictEqual(hit.unknown, true);
+  assert.strictEqual(hit.fix.kind, 'none');
+  assert.match(hit.evidence, /did not answer/i);
+  assert.match(hit.title, /could not check/i);
 
   // And it must not be counted as something that stops a stream.
   const r = diagnose(f);
-  const ids = r.blockers.map((b) => b.id);
-  assert.ok(!ids.includes('phantom-holds-a-user-workspace'));
-  assert.ok(!ids.includes('phantom-touches-the-desktop'));
+  assert.ok(!r.blockers.map((b) => b.id).includes('output-pin-is-stale'));
 });
 
 test('an unknown check is reported but does not claim a stream would fail', () => {
   const f = healthy();
-  // The phantom's checks only run for someone using the phantom.
-  f.settings = { strategy: 'phantom' };
   f.compositor.monitors = null;
   f.compositor.workspaces = null;
   const r = diagnose(f);
@@ -205,12 +226,11 @@ test('a real blocker still reads as a blocker', () => {
 
 test('an unknown does not keep a headline that asserts the fault', () => {
   const f = healthy();
-  f.settings = { strategy: 'phantom' };
   f.compositor.monitors = null;
-  const finding = diagnose(f).findings.find((x) => x.id === 'phantom-armed-but-absent');
+  const finding = diagnose(f).findings.find((x) => x.id === 'output-pin-is-stale');
   assert.ok(finding);
   // The title must not claim the thing the evidence says was never checked.
-  assert.doesNotMatch(finding.title, /does not have it up/i);
+  assert.doesNotMatch(finding.title, /is not there/i);
   assert.match(finding.title, /could not check/i);
 });
 
@@ -247,17 +267,6 @@ test('a firewall whose rules cannot be read is unknown, not a blocker', () => {
   assert.strictEqual(hit.unknown, true);
   assert.match(hit.title, /could not tell/i);
   assert.strictEqual(diagnose(f).streamable, null);
-});
-
-test('the phantom faults stay quiet when the phantom is not the strategy', () => {
-  // A leftover phantom under the resize strategy is not a problem to report.
-  const f = healthy();
-  f.settings = { strategy: 'resize' };
-  const ids = diagnose(f).findings.map((x) => x.id);
-  for (const id of ['phantom-armed-but-absent', 'phantom-not-parked-at-login',
-                    'phantom-holds-a-user-workspace', 'phantom-touches-the-desktop']) {
-    assert.ok(!ids.includes(id), `${id} should not fire under the resize strategy`);
-  }
 });
 
 test('a desktop left at a streaming resolution is reported', () => {

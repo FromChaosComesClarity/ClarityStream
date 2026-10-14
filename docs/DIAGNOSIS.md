@@ -105,6 +105,13 @@ outright; `hyprctl eval` with the `hl.*` API is the only form that applies.
 
 ## The phantom display path, and its three traps
 
+> **Abandoned in 0.7.0.** Everything from here to the end of part three is a
+> record of a path that worked and was removed. Clarity Stream no longer
+> builds a phantom display; it resizes the real one for the duration of a
+> session. The readings are kept because they are what was measured and
+> because the three traps below are still true of anyone trying it. Nothing
+> in this section describes what the current version does.
+
 Spare connectors on the card that drives the displays: **DP-3** and
 **HDMI-A-1**. DisplayPort is preferred because DP accepts arbitrary CVT
 timings most readily, where HDMI is constrained to CEA modes on some driver
@@ -252,6 +259,8 @@ asserts that mid grey reads as mid grey.
 
 # Part three: the phantom display exists, and streams
 
+> Still the abandoned path. See the note in part one.
+
 Added 2026-10-11, after the reboot that armed it.
 
 ## It worked
@@ -344,3 +353,122 @@ the rule rather than the exception:
 - **Node is not on root's PATH.** `sudo` resets `PATH` to `secure_path`, and
   this machine has no system Node, only mise's. The helper died with
   `node: command not found`. The CLI prints `process.execPath` now.
+
+# Part four: why the phantom was removed
+
+It worked, and it was removed anyway, on 2026-10-13.
+
+The phantom was correct about the problem. A client wants its own resolution,
+and changing the real monitor's mode rearranges a desktop somebody may be
+using. A screen that does not physically exist solves that cleanly.
+
+What it cost:
+
+- A kernel parameter, which means editing the boot path on a machine whose
+  owner did not ask for that.
+- An EDID inside the initramfs, so a kernel update has to carry it forward.
+- A reboot to arm, because NVIDIA reads a firmware EDID only at boot.
+- Four separate faults, every one of them found on real hardware rather than
+  predicted: the compositor took a workspace for it; the pointer slid onto it
+  because Hyprland moves between monitors by adjacency; a bar panel rewriting
+  `monitors.lua` restored it to where it had been; and it could not be cycled
+  around a stream because Sunshine resolves `output_name` at service start,
+  so a phantom that was down made every launch fail with `Couldn't find
+  monitor` and a 503 before `prep-cmd` ran.
+
+Each fix worked. The shape of the problem was that there was always another
+one, because an output the compositor did not ask for is a thing every part of
+the desktop has an opinion about.
+
+Then it broke the machine's display configuration badly enough that the
+owner's instruction was to disable it, which is the measurement that mattered.
+
+The replacement is `stream-display.js`: record the streamed monitor's mode,
+position and scale to disk, set the mode the client asked for, put it back
+when the session ends. It needs no root, no reboot, nothing in the boot path,
+and it has one failure mode rather than four. A hard-killed client leaves the
+display small until Sunshine's session timeout, which `display-left-resized`
+reports and `clarity-stream stream-display stop` fixes immediately.
+
+## What the removal also exposed
+
+Deleting the phantom took away the only fault that could return an `unknown`
+verdict for an unreachable compositor, and the tests pinning the three-state
+verdict were written against it. Repointing them at `output-pin-is-stale`
+showed that fault had the bug the deleted one had been fixed for: with
+`hyprctl` silent, every output looks undriven, so a healthy pin read as stale
+and the doctor reported a blocker that was not there. Run outside the
+graphical session it would have said the host could not stream.
+
+It now reports unknown, and the test that would have caught it is the one
+inherited from the phantom. Deleting code is a way to find out what the tests
+were really holding up.
+
+# Part five: a monitor was unplugged, and the stream followed it
+
+2026-10-13, the same evening. One monitor from now on, by decision.
+
+Unplugging the Dell from DP-1 moved every index below it, because
+`output_name` is positional. `output_name = 1` had meant the ultrawide and now
+meant the disabled phantom. That part was expected and is why
+`output-pin-is-stale` exists.
+
+What was not expected: with the pin corrected, and then with the pin removed
+altogether, Sunshine kept binding **connector 826**.
+
+```
+[21:25:52.634]: Info: [wayland] Found monitor: VIE W340I165  (DP-2)
+[21:25:52.634]: Info: -------- Start of KMS monitor list --------
+[21:25:52.634]: Info: --------- End of KMS monitor list ---------
+[21:25:52.775]: Info: Found connector ID [826]
+```
+
+Sunshine's Wayland enumeration is correct: it names DP-2, the ultrawide. Its
+**KMS monitor list is empty**, so there is nothing for `output_name` to
+resolve against, and it falls back to a connector of its own choosing. 826 is
+DP-1, the port the Dell had been in.
+
+sysfs says why that port was still a candidate:
+
+```
+card1-DP-1   disconnected  enabled   id=826
+card1-DP-2   connected     enabled   id=830    <- the ultrawide, driven
+card1-DP-3   connected     disabled  id=834    <- the phantom, kernel-forced
+```
+
+DP-1 reads **disconnected but still enabled**. The kernel had not torn down
+the mode after the monitor was removed, so the connector still had a
+programmed CRTC, and an earlier debug run had shown its geometry:
+
+```
+Debug: crtc(0, 0)
+Debug: crtc(1440, 900)
+```
+
+1440x900, which is the Dell's resolution and not the ultrawide's 3440x1440.
+Sunshine was capturing a scanout buffer for a monitor that was not there.
+
+Three things were measured against this, and none of them fixed it:
+
+1. Correcting `output_name` to the ultrawide's new index. Still 826.
+2. Removing `output_name` entirely. Still 826.
+3. Moving the ultrawide from its leftover `900x0` position to `0x0`, in case
+   the gap at the origin was what the empty KMS list reflected. Still 826,
+   and the KMS list stayed empty.
+
+Each of those was followed by a service restart. **Restarting Sunshine does
+not clear it**, which is the useful finding: this is kernel state, not
+Sunshine state, and it needs a reboot.
+
+## What was built from this
+
+`capture-bound-to-undriven-connector`. Sunshine's config says what it was
+asked for; its log says what it did, and after a monitor change those differ.
+The probe now reads the last startup block of `sunshine.log` for
+`Found connector ID [N]` and compares it against the connectors the
+compositor is actually driving. When they disagree it is a blocker, and when
+the port reads disconnected-but-enabled the finding says to reboot and says
+that restarting will not do.
+
+It reports unknown rather than guessing when the compositor cannot be
+reached, when the log cannot be read, and when Sunshine has never started.

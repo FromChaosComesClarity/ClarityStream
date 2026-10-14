@@ -24,19 +24,33 @@ function runPlan(plan) {
   }
 }
 
-const legalWrite = {
-  kind: 'write-file',
-  path: '/lib/firmware/edid/clarity-stream-DP-3.bin',
-  base64: Buffer.alloc(128).toString('base64')
+const legalRemove = {
+  kind: 'remove-file',
+  path: '/lib/firmware/edid/clarity-stream-DP-3.bin'
 };
 
 test('a legitimate plan passes validation', () => {
-  const r = runPlan({ steps: [legalWrite, { kind: 'run', argv: ['mkinitcpio', '-P'] }] });
+  const r = runPlan({ steps: [legalRemove, { kind: 'run', argv: ['mkinitcpio', '-P'] }] });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /Dry run: nothing was changed/);
 });
 
-test('writing outside the allowlist is refused', () => {
+// The phantom display was the only thing that needed root to WRITE a file.
+// With it gone the step kind is gone, and that has to stay gone: a helper
+// that can write anywhere as root is the worst thing in this repository.
+test('writing a file is refused outright, whatever the path', () => {
+  for (const p of [
+    '/lib/firmware/edid/clarity-stream-DP-3.bin',   // formerly legal
+    '/etc/mkinitcpio.conf.d/clarity-stream.conf',   // formerly legal
+    '/etc/passwd'
+  ]) {
+    const r = runPlan({ steps: [{ kind: 'write-file', path: p, base64: Buffer.alloc(8).toString('base64') }] });
+    assert.notStrictEqual(r.code, 0, `${p} was NOT refused`);
+    assert.match(r.stderr, /Refused|refusing|unknown step kind/, `${p}: ${r.stderr}`);
+  }
+});
+
+test('removing outside the allowlist is refused', () => {
   for (const p of [
     '/etc/passwd',
     '/etc/sudoers.d/clarity-stream',
@@ -45,7 +59,7 @@ test('writing outside the allowlist is refused', () => {
     '/boot/vmlinuz-linux',
     '/lib/firmware/edid/somebody-else.bin'
   ]) {
-    const r = runPlan({ steps: [{ ...legalWrite, path: p }] });
+    const r = runPlan({ steps: [{ ...legalRemove, path: p }] });
     assert.notStrictEqual(r.code, 0, `${p} was NOT refused`);
     assert.match(r.stderr, /Refused|refusing/, `${p}: ${r.stderr}`);
   }
@@ -79,7 +93,7 @@ test('capabilities other than the ones KMS needs are refused', () => {
 
 test('one illegal step invalidates the whole plan', () => {
   // The legal half must not run just because it came first.
-  const r = runPlan({ steps: [legalWrite, { kind: 'run', argv: ['bash', '-c', 'id'] }] });
+  const r = runPlan({ steps: [legalRemove, { kind: 'run', argv: ['bash', '-c', 'id'] }] });
   assert.notStrictEqual(r.code, 0);
   assert.match(r.stderr, /refusing to run/);
 });

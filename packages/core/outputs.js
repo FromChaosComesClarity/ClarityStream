@@ -21,24 +21,9 @@
 // has to be worked out rather than read off.
 
 const fs = require('node:fs');
-const path = require('node:path');
 
 function readText(p) {
   try { return fs.readFileSync(p, 'utf8').trim(); } catch { return null; }
-}
-
-// An output is ours if the EDID the kernel hands out for it is the one we
-// wrote. Matching on the product name in the description would be close
-// enough almost always, and wrong exactly when it matters: a real monitor can
-// report any name it likes. Bytes cannot be coincidence.
-function isPhantomConnector(sysfsName, connectorName) {
-  try {
-    const live = fs.readFileSync(`/sys/class/drm/${sysfsName}/edid`);
-    const ours = fs.readFileSync(path.join('/lib/firmware/edid', `clarity-stream-${connectorName}.bin`));
-    return live.length >= 128 && ours.length >= 128 && live.subarray(0, 128).equals(ours.subarray(0, 128));
-  } catch {
-    return false;
-  }
 }
 
 // Returns the streamable outputs in Sunshine's own index order, annotated
@@ -57,7 +42,6 @@ function enumerateOutputs(facts) {
         connector: c.name,
         connectorId: idRaw === null ? null : Number(idRaw),
         preferredMode: mode,
-        isPhantom: isPhantomConnector(c.sysfs, c.name),
         monitor: monitors.find((m) => m.name === c.name) ?? null
       };
     });
@@ -74,7 +58,7 @@ function enumerateOutputs(facts) {
     orderKnown: c.connectorId !== null,
     label: (c.monitor
       ? `${c.connector} ${c.monitor.width}x${c.monitor.height} (${c.monitor.description || 'unknown make'})`
-      : `${c.connector} ${c.preferredMode ?? ''}`.trim()) + (c.isPhantom ? ' [phantom]' : '')
+      : `${c.connector} ${c.preferredMode ?? ''}`.trim())
   }));
 }
 
@@ -83,45 +67,23 @@ function indexForConnector(facts, connectorName) {
   return found ? found.index : null;
 }
 
-// Under the phantom strategy the phantom wins whenever one exists: that is
-// the entire reason it was armed, and falling back to a real monitor would
-// quietly undo the thing the user rebooted for.
+// The biggest output by pixel count, which is almost always the main display
+// and the one a person means by "my monitor".
 //
-// Under any other strategy a leftover phantom is not the target. Resizing
-// works on a real monitor, and streaming a disabled phantom is how you get a
-// black picture.
-//
-// Otherwise the biggest output by pixel count, which is almost always the
-// main display and the one a person means by "my monitor".
+// Biggest first, focus only as a tie-break. Preferring the focused monitor
+// made the answer change as the user moved between windows, so the doctor's
+// suggestion and the monitor a stream resized could differ from one minute to
+// the next. Area is stable.
 function defaultOutput(facts) {
   const outs = enumerateOutputs(facts);
   if (!outs.length) return null;
-  const strategy = facts.settings?.strategy ?? 'resize';
-  const real = outs.filter((o) => !o.isPhantom);
-  if (strategy === 'phantom') {
-    const phantom = outs.find((o) => o.isPhantom);
-    if (phantom) return phantom;
-  } else if (real.length) {
-    // Never suggest a phantom when it is not the strategy in use.
-    //
-    // Biggest first, focus only as a tie-break. Preferring the focused
-    // monitor made the answer change as the user moved between windows, so
-    // the doctor's suggestion and the monitor a stream resized could differ
-    // from one minute to the next. Area is stable and is what somebody means
-    // by "my monitor".
-    const area = (o) => (o.monitor?.width ?? 0) * (o.monitor?.height ?? 0);
-    return real.reduce((best, o) => {
-      if (area(o) !== area(best)) return area(o) > area(best) ? o : best;
-      return o.monitor?.focused ? o : best;
-    }, real[0]);
-  }
-  const focused = outs.find((o) => o.monitor?.focused);
-  if (focused) return focused;
-  return outs.reduce((best, o) => {
-    const area = (o.monitor?.width ?? 0) * (o.monitor?.height ?? 0);
-    const bestArea = (best.monitor?.width ?? 0) * (best.monitor?.height ?? 0);
-    return area > bestArea ? o : best;
-  }, outs[0]);
+  const driven = outs.filter((o) => o.monitor);
+  const pool = driven.length ? driven : outs;
+  const area = (o) => (o.monitor?.width ?? 0) * (o.monitor?.height ?? 0);
+  return pool.reduce((best, o) => {
+    if (area(o) !== area(best)) return area(o) > area(best) ? o : best;
+    return o.monitor?.focused ? o : best;
+  }, pool[0]);
 }
 
 module.exports = { enumerateOutputs, indexForConnector, defaultOutput };

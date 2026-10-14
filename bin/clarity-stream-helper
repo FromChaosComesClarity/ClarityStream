@@ -42,9 +42,14 @@ function log(text) {
   try { fs.appendFileSync(logFile, text.endsWith('\n') ? text : `${text}\n`); } catch { /* ignore */ }
 }
 
-// Files this helper may create or replace. Each is owned by Clarity Stream:
-// deleting any of them undoes what it did, and none belongs to a package.
-const WRITABLE = [
+// Files this helper may delete. Each is owned by Clarity Stream: deleting any
+// of them undoes what it did, and none belongs to a package.
+//
+// Only removals remain. Clarity Stream used to synthesise an EDID and add
+// kernel parameters so an unused connector could be forced on as a stream
+// display. That is gone, and these exist so a host still carrying one can be
+// cleaned up. There is no longer anything this helper may write.
+const REMOVABLE = [
   /^\/lib\/firmware\/edid\/clarity-stream-[A-Za-z0-9-]+\.bin$/,
   /^\/usr\/lib\/firmware\/edid\/clarity-stream-[A-Za-z0-9-]+\.bin$/,
   /^\/etc\/mkinitcpio\.conf\.d\/clarity-stream\.conf$/,
@@ -81,7 +86,7 @@ function allowedPath(p) {
   // Reject anything that resolves somewhere other than where it claims, which
   // is how a symlink would be used to escape the allowlist.
   if (resolved !== p) return false;
-  return WRITABLE.some((re) => re.test(resolved));
+  return REMOVABLE.some((re) => re.test(resolved));
 }
 
 // The scoped form cannot be enumerated, because the network and the list of
@@ -113,7 +118,6 @@ function allowedRun(argv) {
 
 function describe(step) {
   switch (step.kind) {
-    case 'write-file': return `write    ${step.path}${step.base64 ? ` (${Buffer.from(step.base64, 'base64').length} bytes)` : ''}`;
     case 'remove-file': return `remove   ${step.path}`;
     case 'run': return `run      ${step.argv.join(' ')}`;
     case 'setcap': return `setcap   ${step.caps} ${step.path}`;
@@ -123,10 +127,6 @@ function describe(step) {
 
 function validate(step) {
   switch (step.kind) {
-    case 'write-file':
-      if (!allowedPath(step.path)) return `refusing to write ${step.path}: not a Clarity Stream file`;
-      if (typeof step.base64 !== 'string' && typeof step.contents !== 'string') return 'write-file has no contents';
-      return null;
     case 'remove-file':
       if (!allowedPath(step.path)) return `refusing to remove ${step.path}: not a Clarity Stream file`;
       return null;
@@ -144,17 +144,6 @@ function validate(step) {
 
 function run(step) {
   switch (step.kind) {
-    case 'write-file': {
-      const dir = path.dirname(step.path);
-      fs.mkdirSync(dir, { recursive: true });
-      const data = step.base64 ? Buffer.from(step.base64, 'base64') : Buffer.from(step.contents, 'utf8');
-      // Write then rename, so a failure never leaves a half-written file that
-      // the bootloader would happily try to use.
-      const tmp = `${step.path}.clarity-tmp`;
-      fs.writeFileSync(tmp, data, { mode: step.mode ?? 0o644 });
-      fs.renameSync(tmp, step.path);
-      return `wrote ${data.length} bytes`;
-    }
     case 'remove-file':
       if (!fs.existsSync(step.path)) return 'already absent';
       fs.unlinkSync(step.path);

@@ -22,16 +22,8 @@
   border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
 }
 .tag.streamed { color: var(--accent); border-color: #7aa2f755; background: #7aa2f714; }
-.tag.phantom { color: #bb9af7; border-color: #bb9af755; background: #bb9af714; }
+.tag.ours { color: #bb9af7; border-color: #bb9af755; background: #bb9af714; }
 .tag.absent { color: var(--warn); border-color: #e0af6855; }
-
-/* ---------------------------------------------------------------- phantom */
-
-.kv { display: grid; grid-template-columns: minmax(110px, 150px) 1fr; gap: 6px 14px; margin-bottom: 14px; }
-.kv dd { overflow-wrap: anywhere; }
-.kv dt { color: var(--muted); font-size: 12.5px; }
-.kv dd { margin: 0; font-size: 13px; }
-.kv dd.mono { font-family: var(--mono); font-size: 12px; }
 
 /* ------------------------------------------------------------------ apps */
 

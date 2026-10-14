@@ -179,11 +179,11 @@ function drawSettings() {
   pill.textContent = data.moonlight ? 'Moonlight ready' : 'Moonlight missing';
   pill.className = `pill ${data.moonlight ? 'on' : 'off'}`;
 
-  // A resolution the host cannot produce gets scaled, which is the thing the
-  // phantom display exists to avoid, so it is worth saying out loud.
+  // Say what actually happens, because a resolution the host has no mode for
+  // is scaled rather than refused, and that looks like a bug if unannounced.
   $('resHint').textContent =
-    `The host streams at whatever its capture display is set to. A Clarity Stream host with a ` +
-    `phantom display can offer ${s.resolution} exactly; anything else gets scaled or letterboxed.`;
+    `A Clarity Stream host sets its display to ${s.resolution} for the session and puts it back ` +
+    `afterwards. If it has no mode that shape, it streams what it has and this machine scales it.`;
 }
 
 /* --------------------------------------------------------------- actions */

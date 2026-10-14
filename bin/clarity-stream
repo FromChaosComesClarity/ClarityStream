@@ -6,9 +6,6 @@
 
 const { probe } = require('../packages/core/probe');
 const { diagnose } = require('../packages/core/diagnose');
-const { buildEdid } = require('../packages/core/edid');
-const { planAddParams, detect: detectBootloader } = require('../packages/core/bootloader');
-const { planArm, planDisarm, candidates, verifyArmed, restoreMonitorsCommands, toHelperPlan } = require('../packages/core/phantom');
 const verify = require('../packages/core/verify');
 const { applyAll, needsRestart, restartUserService, isPrivileged } = require('../packages/core/apply');
 const pathMod3 = require('node:path');
@@ -16,7 +13,6 @@ const pathMod3 = require('node:path');
 // Returned by a command that must keep running. The dispatcher calls
 // process.exit on whatever a command returns, which killed the watcher the
 // instant it finished setting itself up: systemd saw a clean exit and marked
-// the unit inactive while the phantom sat where it had drifted.
 const KEEP_ALIVE = Symbol('keep-alive');
 
 const C = process.stdout.isTTY
@@ -85,51 +81,14 @@ function describeFix(fix) {
     case 'setcap': return `setcap ${fix.caps} ${fix.path}`;
     case 'user-service': return `systemctl --user enable --now ${fix.unit}`;
     case 'choose-output': return `pin output_name to one of ${fix.candidates.join(', ')}`;
-    case 'arm-phantom': return `force a connector on ${fix.card}: ${fix.candidates.join(' or ')}`;
-    case 'park-phantom': return `clarity-stream phantom --park`;
-    case 'install-park-service': return `clarity-stream phantom --install-service`;
     case 'open-ports': return `open ${fix.ports.map((p) => `${p.port}/${p.proto}`).join(', ')} in ${fix.firewall}`;
     case 'wire-resize': return 'clarity-stream apps --apply';
+    case 'unpin-output': return 'remove output_name; with one display it is only a liability';
+    case 'reboot-to-clear-connectors': return 'reboot: the kernel is holding a mode on a port with nothing on it';
     case 'modprobe-conf': return `write "${fix.line}" to ${fix.path}`;
-    case 'use-phantom-instead': return 'target a forced connector rather than a headless output';
+    case 'target-real-monitor': return 'aim capture at a monitor that is actually being driven';
     default: return fix.kind;
   }
-}
-
-function edidCmd(args) {
-  const [spec, out] = args;
-  const m = /^(\d+)x(\d+)(?:@(\d+(?:\.\d+)?))?$/.exec(spec ?? '');
-  if (!m) {
-    console.error('usage: clarity-stream edid <WxH[@Hz]> [outfile]');
-    return 2;
-  }
-  const { bytes, timing } = buildEdid({
-    width: Number(m[1]), height: Number(m[2]), refresh: m[3] ? Number(m[3]) : 60
-  });
-  if (out) {
-    require('node:fs').writeFileSync(out, bytes);
-    console.log(`${bytes.length} bytes -> ${out}`);
-  } else {
-    process.stdout.write(bytes);
-    return 0;
-  }
-  console.log(`${timing.hActive}x${timing.vActive} @ ${timing.actualRefreshHz.toFixed(3)} Hz, ` +
-              `pixel clock ${timing.pixelClockMHz} MHz (CVT reduced blanking)`);
-  return 0;
-}
-
-function bootCmd() {
-  const bl = detectBootloader();
-  console.log(`bootloader: ${bl.kind ?? 'unrecognised'}`);
-  if (bl.dropinPath) console.log(`drop-in:    ${bl.dropinPath}`);
-  if (bl.regenerate) console.log(`regenerate: ${bl.regenerate.join(' ')}`);
-  if (bl.usesUki !== undefined) console.log(`uki:        ${bl.usesUki}`);
-  const plan = planAddParams(['drm.edid_firmware=DP-3:edid/clarity-stream-DP-3.bin', 'video=DP-3:e']);
-  console.log(`\nplan ok: ${plan.ok}${plan.alreadyActive ? ' (already active)' : ''}`);
-  for (const s of plan.steps ?? []) {
-    console.log(s.kind === 'run' ? `  run       ${s.argv.join(' ')}` : `  ${s.kind} ${s.path}`);
-  }
-  return 0;
 }
 
 function fixCmd(rest) {
@@ -159,9 +118,12 @@ function fixCmd(rest) {
     if (d.kind === 'sunshine-conf') {
       console.log(`${C.b}${facts.sunshine.confPath}${C.x}${d.created ? `  ${C.d}(created)${C.x}` : ''}`);
       for (const a of d.applied) {
-        const mark = a.action === 'unchanged' ? C.d + '=' + C.x : C.g + (a.action === 'added' ? '+' : '~') + C.x;
+        const mark = a.action === 'unchanged' ? C.d + '=' + C.x
+          : C.g + ({ added: '+', removed: '-' }[a.action] ?? '~') + C.x;
         const from = a.from === null ? '' : ` ${C.d}(was ${a.from})${C.x}`;
-        console.log(`  ${mark} ${a.key} = ${a.to}${from}`);
+        console.log(a.action === 'removed'
+          ? `  ${mark} ${a.key}${from}`
+          : `  ${mark} ${a.key} = ${a.to}${from}`);
       }
     } else if (d.kind === 'user-service') {
       const ok = d.dryRun ? `${C.d}would enable and start${C.x}` : (d.ok ? `${C.g}${d.detail}${C.x}` : `${C.r}${d.detail}${C.x}`);
@@ -198,7 +160,6 @@ function appsCmd(rest) {
   const apply = rest.includes('--apply');
   const prune = rest.includes('--prune-stock');
   const sunshineApps = require('../packages/core/sunshine-apps');
-  const phantomScript = require('../packages/core/phantom-script');
   const { enumerateOutputs } = require('../packages/core/outputs');
   const fsMod = require('node:fs');
   const pathMod2 = require('node:path');
@@ -240,33 +201,7 @@ function appsCmd(rest) {
     console.log('');
   }
   let scriptPath = null;
-  const phantom = settings.strategy === 'phantom' && enumerateOutputs(facts).find((o) => o.isPhantom);
-  if (phantom) {
-    const mon = phantom.monitor;
-    const opts = {
-      connector: phantom.connector,
-      // When the phantom is switched off it is absent from hyprctl, so fall
-      // back to the mode its EDID prefers rather than reporting nothing.
-      // probe.js normalises hyprctl's refreshRate to `refresh`; reading the
-      // raw hyprctl name here threw a TypeError and aborted the whole write.
-      mode: mon ? `${mon.width}x${mon.height}@${Number(mon.refresh).toFixed(2)}` : `${phantom.preferredMode ?? '1920x1080'}@60`,
-      position: mon ? `${mon.x}x${mon.y}` : 'auto',
-      scale: mon ? mon.scale : 1
-    };
-    // The phantom is NOT cycled around a stream. Sunshine resolves
-    // output_name when the service starts, not when a session begins, so a
-    // phantom that is down at that moment makes every launch fail with
-    // "Couldn't find monitor [2]" and a 503 to the client, before any
-    // prep-cmd gets the chance to run. Measured. It stays up, parked out of
-    // reach, holding a workspace of its own.
-    scriptPath = null;
-    if (apply) phantomScript.install(opts);  // kept for manual use and teardown
-    console.log(`  phantom    ${phantom.connector} at ${opts.mode}`);
-    console.log(`  ${C.d}stays up: Sunshine binds output_name at service start, so a${C.x}`);
-    console.log(`  ${C.d}phantom that is down then makes every launch fail${C.x}\n`);
-  } else if (settings.strategy === 'phantom') {
-    console.log(`  ${C.y}no phantom armed; entries will stream whatever output_name points at${C.x}\n`);
-  } else if (settings.strategy === 'none') {
+  if (settings.strategy === 'none') {
     console.log(`  ${C.d}entries stream the monitor as it is; the client scales${C.x}\n`);
   }
 
@@ -569,209 +504,21 @@ function measureCmd(rest) {
   return m.isBlack ? 1 : 0;
 }
 
-function phantomCmd(rest) {
-  const hypr = require('../packages/core/hypr');
-  const phantomService = require('../packages/core/phantom-service');
-  const { enumerateOutputs } = require('../packages/core/outputs');
-
-  // --park / --unpark / --install-service act on a phantom that already
-  // exists, so they run before the planning path below.
-  if (rest.includes('--park') || rest.includes('--unpark') ||
-      rest.includes('--install-service') || rest.includes('--watch')) {
-    const waitIdx = rest.indexOf('--wait');
-    const waitSecs = waitIdx === -1 ? 0 : Number(rest[waitIdx + 1] || 30);
-
-    // graphical-session.target can be reached before the compositor answers,
-    // so wait rather than fail at login.
-    const deadline = Date.now() + waitSecs * 1000;
-    let mons = hypr.monitors();
-    while (!mons && Date.now() < deadline) {
-      try { require('node:child_process').execFileSync('sleep', ['1']); } catch { /* ignore */ }
-      mons = hypr.monitors();
-    }
-    if (!mons) { console.error('Hyprland did not answer; nothing to do.'); return 1; }
-
-    const facts2 = probe();
-    const ph = enumerateOutputs(facts2).find((o) => o.isPhantom);
-    if (!ph) { console.error('No phantom display is armed.'); return 1; }
-
-    if (rest.includes('--install-service')) {
-      const r = phantomService.install({
-        nodePath: process.execPath,
-        cliPath: require('../packages/core/paths').cliPath(),
-        sunshineUnit: facts2.sunshine.unitName
-      });
-      console.log(`${C.b}${r.path}${C.x}`);
-      console.log(`  daemon-reload ${r.reloaded ? C.g + 'ok' + C.x : C.r + 'failed' + C.x}`);
-      console.log(`  enabled       ${r.enabled ? C.g + 'yes' + C.x : C.r + (r.detail || 'failed') + C.x}`);
-      console.log(`${C.d}It parks ${ph.connector} at login, before ${facts2.sunshine.unitName}.${C.x}`);
-      return r.enabled ? 0 : 1;
-    }
-
-    if (rest.includes('--unpark')) {
-      const r = hypr.disable(ph.connector);
-      console.log(`${ph.connector} ${r.present ? C.r + 'still up' + C.x : C.g + 'taken down' + C.x}`);
-      return r.present ? 1 : 0;
-    }
-
-    const mode = `${ph.preferredMode ?? '1920x1080'}@60`;
-
-    if (rest.includes('--watch')) {
-      const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
-      const say = (m) => console.log(`${stamp()}  ${m}`);
-
-      const doPark = (why) => {
-        const res = hypr.park(ph.connector, { mode });
-        say(`${why}: ${res.ok ? `parked at ${res.position}, workspace ${res.workspace}` : 'park failed'}` +
-            (res.strandedWorkspaces?.length ? `, still holding ${res.strandedWorkspaces.join(',')}` : ''));
-        return res;
-      };
-
-      const first = doPark('start');
-      let expected = first.position;
-
-      // Hyprland emits several events for one reconfigure, so a reload is
-      // coalesced rather than parked five times in a row.
-      let timer = null;
-      const onChange = () => {
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-          const now = (hypr.monitors() ?? []).find((m) => m.name === ph.connector);
-          const held = hypr.workspaceOn(ph.connector).map((w) => w.id);
-          const drifted = !now
-            || `${now.x}x${now.y}` !== expected
-            || held.some((id) => id !== 11);
-          if (!drifted) return;
-          const res = doPark(now ? 'drifted back' : 'went missing');
-          if (res.ok) expected = res.position;
-        }, 800);
-      };
-
-      hypr.watchMonitorEvents(onChange, { log: (m) => say(m) });
-      say(`watching ${hypr.eventSocketPath() ?? 'no event socket'}`);
-
-      for (const sig of ['SIGINT', 'SIGTERM']) {
-        process.on(sig, () => { say(`${sig}, stopping`); process.exit(0); });
-      }
-      return KEEP_ALIVE;
-    }
-
-    const r = hypr.park(ph.connector, { mode });
-    console.log(`${C.b}${ph.connector}${C.x} parked at ${r.position}, workspace ${r.workspace}`);
-    if (r.strandedWorkspaces.length) {
-      console.log(`  ${C.y}still holding ${r.strandedWorkspaces.map((w) => `ws${w}`).join(', ')}${C.x}`);
-    } else {
-      console.log(`  ${C.g}holds only its own workspace; none of yours are stranded${C.x}`);
-    }
-    return r.ok ? 0 : 1;
-  }
-
-  const facts = probe();
-  const spec = rest.find((a) => /^\d+x\d+(@\d+)?$/.test(a));
-  const connector = rest.find((a) => /^(DP|HDMI)[-A-Z0-9]*$/i.test(a));
-  const { card, ranked } = candidates(facts);
-
-  console.log(`${C.b}Clarity Stream — phantom display${C.x}\n`);
-  if (!card) { console.log(`${C.r}No GPU drives a display.${C.x}`); return 1; }
-  console.log(`  display GPU        ${card.card} (${card.driver})`);
-  console.log(`  spare connectors   ${ranked.join(', ') || 'none'}`);
-  // Check whichever connector we actually wrote an EDID for, not just the
-  // first candidate: once armed, that connector is no longer "spare".
-  const target = connector ?? (() => {
-    const fsMod = require('node:fs');
-    const { FIRMWARE_DIR } = require('../packages/core/phantom');
-    try {
-      const f = fsMod.readdirSync(FIRMWARE_DIR).find((n) => /^clarity-stream-(.+)\.bin$/.test(n));
-      return f ? f.match(/^clarity-stream-(.+)\.bin$/)[1] : ranked[0];
-    } catch { return ranked[0]; }
-  })();
-
-  const armed = target ? verifyArmed(target) : null;
-  if (armed) {
-    console.log(`  phantom connector  ${target}`);
-    console.log(`  currently armed    ${armed.armed ? C.g + 'yes' + C.x : C.y + 'no' + C.x}  ${C.d}${armed.reason ?? ''}${C.x}`);
-    console.log(`  ${C.d}status ${armed.status}, EDID ${armed.edidLength} bytes, matches ours: ${armed.edidMatches}${C.x}`);
-    if (armed.modes?.length) {
-      console.log(`  modes offered      ${armed.modes.join(', ')}`);
-    }
-  }
-  console.log('');
-
-  if (!spec) {
-    console.log(`${C.d}Pass a resolution to see the plan, e.g. clarity-stream phantom 1920x1080@60${C.x}`);
-    return 0;
-  }
-  const m = /^(\d+)x(\d+)(?:@(\d+))?$/.exec(spec);
-  const plan = planArm(facts, {
-    connector, width: Number(m[1]), height: Number(m[2]), refresh: m[3] ? Number(m[3]) : 60
-  });
-  if (!plan.ok) { console.log(`${C.r}${plan.reason}${C.x}`); return 1; }
-
-  console.log(`${C.b}Plan: force ${plan.connector} on ${plan.card} as ${m[1]}x${m[2]}@${m[3] ?? 60}${C.x}`);
-  console.log(`  timing   ${plan.timing.hActive}x${plan.timing.vActive} @ ${plan.timing.actualRefreshHz.toFixed(3)} Hz, ` +
-              `${plan.timing.pixelClockMHz} MHz pixel clock (CVT reduced blanking)`);
-  console.log(`  modes    ${plan.advertised.map((a) => `${a.width}x${a.height}`).join(', ')}`);
-  console.log(`  ${C.d}all selectable at runtime; only the EDID itself needs a reboot${C.x}`);
-  console.log(`  bootloader ${plan.bootloader?.kind ?? 'unknown'}${plan.bootloader?.usesUki ? ' (UKI)' : ''}`);
-  console.log(`  kernel params  ${plan.kernelParams.join(' ')}`);
-  console.log('');
-  console.log(`${C.b}Steps${C.x}`);
-  for (const s of plan.steps) {
-    if (s.kind === 'run') console.log(`  run          ${s.argv.join(' ')}`);
-    else if (s.kind === 'write-file') console.log(`  write        ${s.path}${s.binary ? ` (${s.contents.length} bytes)` : ''}`);
-    else console.log(`  ${s.kind}  ${s.path}`);
-  }
-  console.log('');
-
-  if (rest.includes('--arm')) {
-    const fs = require('node:fs');
-    const os = require('node:os');
-    const pathMod = require('node:path');
-    const dir = pathMod.join(os.homedir(), '.cache', 'clarity-stream');
-    fs.mkdirSync(dir, { recursive: true });
-    const planFile = pathMod.join(dir, 'phantom-plan.json');
-    fs.writeFileSync(planFile, JSON.stringify(
-      toHelperPlan(plan, `Arm the phantom display on ${plan.connector} (${m[1]}x${m[2]})`), null, 2));
-    const paths = require('../packages/core/paths');
-    const apply = paths.helperCommand(planFile);
-    console.log(`${C.b}Plan written to${C.x} ${planFile}`);
-    console.log(`${C.d}Check it without changing anything:${C.x}`);
-    console.log(`  ${apply.replace(/^sudo /, '')} --dry-run`);
-    console.log(`${C.b}Then apply it:${C.x}`);
-    console.log(`  ${apply}`);
-    console.log('');
-  }
-
-  console.log(`${C.y}A reboot is required: NVIDIA does not hot-reload a firmware EDID.${C.x}`);
-  if (plan.monitorStateAtRisk) {
-    console.log(`${C.y}Adding an output makes Hyprland re-apply monitors.lua, discarding runtime${C.x}`);
-    console.log(`${C.y}monitor state. These restore the current state afterwards:${C.x}`);
-    for (const c of restoreMonitorsCommands(plan.monitorSnapshot)) {
-      console.log(`  ${c[0]} ${c[1]} '${c[2]}'`);
-    }
-  }
-  return 0;
-}
-
 const [cmd, ...rest] = process.argv.slice(2);
 let code = 0;
 switch (cmd) {
   case 'doctor': code = doctor(rest.includes('--json')); break;
   case 'probe': console.log(JSON.stringify(probe(), null, 2)); break;
-  case 'edid': code = edidCmd(rest); break;
-  case 'boot': code = bootCmd(); break;
   case 'fix': code = fixCmd(rest); break;
   case 'apps': code = appsCmd(rest); break;
   case 'firewall': code = firewallCmd(rest); break;
   case 'stream-display': code = streamDisplayCmd(rest); break;
   case 'verify': code = verifyCmd(rest); break;
   case 'measure': code = measureCmd(rest); break;
-  case 'phantom': code = phantomCmd(rest); break;
   default:
     console.log('clarity-stream <command>\n');
     console.log('  doctor [--json]      probe this host and report what would stop a stream');
     console.log('  probe                dump measured facts as JSON');
-    console.log('  edid <WxH[@Hz]> [f]  build a phantom display EDID');
     console.log('  fix [--apply]        apply what can be fixed without root');
   console.log('                       [--output NAME] [--no-service]');
   console.log('  apps [--apply]       publish the Moonlight app list [--prune-stock]');
@@ -780,11 +527,6 @@ switch (cmd) {
   console.log('                       start|stop, called by Sunshine around a stream');
   console.log('  verify [output]      measure real pixels, prove the capture is not black');
   console.log('  measure <image>      report whether a captured frame is black');
-  console.log('  phantom [WxH[@Hz]]   plan the phantom stream display');
-  console.log('                       [--arm] writes a plan for the privileged helper');
-  console.log('                       [--park] park it and reserve its workspace');
-  console.log('                       [--install-service] park it at every login');
-  console.log('  boot                 show how a kernel parameter would be added here');
     code = cmd ? 2 : 0;
 }
 // A long-running command keeps the event loop alive on its own; exiting here

@@ -34,13 +34,17 @@ function probeGpus() {
       if (!c.startsWith(`${entry}-`)) continue;
       const status = readText(`/sys/class/drm/${c}/status`);
       const enabled = readText(`/sys/class/drm/${c}/enabled`);
+      // The DRM object id, which is what Sunshine prints when it says which
+      // connector it bound. Needed for every connector, not just the
+      // connected ones, or a stream bound to an empty port cannot be named.
+      const idRaw = readText(`/sys/class/drm/${c}/connector_id`);
       connectors.push({
         name: c.slice(entry.length + 1),
         sysfs: c,
+        connectorId: idRaw === null ? null : Number(idRaw),
         status,
         enabled,
         // Writeback connectors are not displays and must never be offered as
-        // a phantom candidate.
         isWriteback: /Writeback/i.test(c)
       });
     }
@@ -159,6 +163,40 @@ const SUNSHINE_CONF_DIRS = [
   '/etc/sunshine'
 ];
 
+// Sunshine names the DRM connector it bound, and the config does not: a
+// resolved index is not the same as the index we asked for. This reads the
+// most recent startup block only, so a connector from a previous boot or a
+// previous monitor layout is never reported as current.
+function readSunshineLog(logPath) {
+  const text = readText(logPath);
+  if (text === null) return { logReadable: false, boundConnectorId: null, kmsListEmpty: null };
+
+  // Each start logs the version banner, so the last one marks the live run.
+  const lines = text.split('\n');
+  let from = 0;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (lines[i].includes('Sunshine version:')) { from = i; break; }
+  }
+  const run = lines.slice(from);
+
+  const ids = run
+    .map((l) => l.match(/Found connector ID \[(\d+)\]/))
+    .filter(Boolean)
+    .map((m) => Number(m[1]));
+
+  // An empty list means Sunshine could not enumerate displays through KMS at
+  // all, which is why output_name then resolves to nothing.
+  const start = run.findIndex((l) => l.includes('Start of KMS monitor list'));
+  const end = run.findIndex((l) => l.includes('End of KMS monitor list'));
+  const kmsListEmpty = start === -1 || end === -1 ? null : end === start + 1;
+
+  return {
+    logReadable: true,
+    boundConnectorId: ids.length ? ids[ids.length - 1] : null,
+    kmsListEmpty
+  };
+}
+
 function probeSunshine() {
   const bin = which('sunshine');
   let realBin = null;
@@ -185,6 +223,7 @@ function probeSunshine() {
     ?? SUNSHINE_CONF_DIRS[0];
   const confPath = path.join(confDir, 'sunshine.conf');
   const appsPath = path.join(confDir, 'apps.json');
+  const logPath = path.join(confDir, 'sunshine.log');
 
   // Unit state for the user service, which is how sunshine is meant to run
   // on a Wayland session: a system unit has no seat and cannot capture.
@@ -206,7 +245,8 @@ function probeSunshine() {
     // empty ok result means "no caps", not "could not tell".
     capabilities: caps && caps.ok ? (caps.stdout.trim() || null) : null,
     capabilitiesReadable: Boolean(caps && caps.ok),
-    confDir, confPath, appsPath,
+    confDir, confPath, appsPath, logPath,
+    ...readSunshineLog(logPath),
     confExists: Boolean(confPath && fs.existsSync(confPath)),
     confRaw: confPath ? readText(confPath) : null,
     unitName,
@@ -239,30 +279,6 @@ function probeMoonlight() {
   };
 }
 
-// ------------------------------------------------------ phantom path
-
-function probePhantomSupport() {
-  const paramPath = '/sys/module/drm/parameters/edid_firmware';
-  let parkService = { installed: false, enabled: 'unknown', active: 'unknown' };
-  try { parkService = require('./phantom-service').status(); } catch { /* leave defaults */ }
-  return {
-    parkService,
-    // The DRM core's EDID override. Present does not mean honoured by every
-    // driver, which is the whole question on NVIDIA, so this only reports
-    // that the knob exists.
-    edidFirmwareParamPresent: fs.existsSync(paramPath),
-    edidFirmwareParamValue: readText(paramPath) || null,
-    firmwareEdidDir: '/lib/firmware/edid',
-    firmwareEdidDirExists: fs.existsSync('/lib/firmware/edid'),
-    firmwareEdidFiles: readDir('/lib/firmware/edid'),
-    kernelCmdline: readText('/proc/cmdline'),
-    bootloader: fs.existsSync('/boot/limine.conf') ? 'limine'
-      : fs.existsSync('/etc/default/grub') ? 'grub'
-      : fs.existsSync('/boot/loader/loader.conf') ? 'systemd-boot'
-      : null
-  };
-}
-
 function probe() {
   const gpus = probeGpus();
   const compositor = probeCompositor();
@@ -284,9 +300,8 @@ function probe() {
     firewall: require('./firewall').detect(),
     settings: require('./settings').read(),
     strandedResize: require('./stream-display').strandedResize(),
-    moonlight: probeMoonlight(),
-    phantom: probePhantomSupport()
+    moonlight: probeMoonlight()
   };
 }
 
-module.exports = { probe, probeGpus, probeNvidia, probeCompositor, probeSunshine, probeMoonlight, probePhantomSupport };
+module.exports = { probe, probeGpus, probeNvidia, probeCompositor, probeSunshine, probeMoonlight };

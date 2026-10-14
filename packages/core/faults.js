@@ -127,6 +127,134 @@ const FAULTS = [
   },
 
   {
+    id: 'capture-bound-to-undriven-connector',
+    title: 'Sunshine bound its capture to a port with nothing on it',
+    severity: SEVERITY.BLOCKER,
+    // Config says what we asked for. The log says what Sunshine did, and the
+    // two are not the same thing: an index is resolved at service start
+    // against whatever the kernel reported then.
+    //
+    // Measured on this machine. After a monitor was unplugged, Sunshine kept
+    // binding the connector it had left behind, which sysfs reported as
+    // disconnected but still enabled: the kernel was holding a mode on an
+    // empty port. Capturing it gives a stream of whatever is left in that
+    // scanout buffer, which is not the desktop.
+    detect: (f) => {
+      if (!f.sunshine.installed) return null;
+      if (f.sunshine.logReadable !== true) return null;
+      const bound = f.sunshine.boundConnectorId;
+      if (bound === null) return null;                 // never started, nothing to say
+
+      const card = f.gpus.find((g) => g.connectedCount > 0);
+      if (!card) return null;
+      const all = card.connectors ?? [];
+      // Without ids there is nothing to compare, and guessing would be worse
+      // than saying the check could not be made.
+      if (!all.some((c) => c.connectorId !== null)) return {
+        title: 'Could not check which port Sunshine bound',
+        evidence: `Sunshine bound connector ${bound}, but no connector id could be read from sysfs.`,
+        unknown: true,
+        fix: { kind: 'none' }
+      };
+
+      const driven = new Set(
+        (f.compositor.monitors ?? [])
+          .map((m) => all.find((c) => c.name === m.name)?.connectorId)
+          .filter((id) => id !== null && id !== undefined)
+      );
+      if (f.compositor.monitors === null) return {
+        title: 'Could not check which port Sunshine bound',
+        evidence: 'The compositor did not answer, so no port could be matched to the capture.',
+        unknown: true,
+        fix: { kind: 'none' }
+      };
+      if (driven.has(bound)) return null;              // capturing a live display
+
+      const who = all.find((c) => c.connectorId === bound);
+      const drivenNames = (f.compositor.monitors ?? []).map((m) => m.name).join(', ') || 'none';
+      return {
+        evidence: who
+          ? `Sunshine bound connector ${bound} (${who.name}), which is ${who.status}` +
+            `${who.enabled === 'enabled' ? ' but still enabled' : ''}. ` +
+            `The compositor is driving ${drivenNames}.`
+          : `Sunshine bound connector ${bound}, which is not a connector on ${card.card}. ` +
+            `The compositor is driving ${drivenNames}.`,
+        detail: who && who.status === 'disconnected' && who.enabled === 'enabled'
+          ? 'A port that reads disconnected but enabled is one the kernel has not torn down ' +
+            'since the monitor was removed. Sunshine resolves its capture target at service ' +
+            'start and will keep choosing it. Rebooting clears it; restarting Sunshine does ' +
+            'not, which was measured.'
+          : 'Sunshine resolves its capture target when its service starts, against whatever ' +
+            'the kernel reported at that moment.',
+        fix: { kind: 'reboot-to-clear-connectors' }
+      };
+    }
+  },
+
+  {
+    id: 'output-pin-is-stale',
+    title: 'Sunshine is pinned to a display that is not there',
+    severity: SEVERITY.BLOCKER,
+    // output_name is a positional index, so unplugging a monitor renumbers
+    // everything below it and the pin silently comes to mean a different
+    // screen, or none. Observed: removing one of two monitors left the pin
+    // aimed at a disabled output, and Sunshine captured a dead CRTC.
+    detect: (f) => {
+      if (!f.sunshine.installed) return null;
+      const current = sunshineKey(f, 'output_name');
+      if (current === null || !/^\d+$/.test(current)) return null;
+      // Run outside the graphical session and hyprctl answers nothing, so
+      // every output looks undriven and a healthy pin would read as stale.
+      // A confident wrong answer is the expensive failure here.
+      if (f.compositor.monitors === null) return {
+        title: 'Could not check which display Sunshine is pinned to',
+        evidence: 'The compositor did not answer, so no output could be matched to the pin.',
+        unknown: true,
+        fix: { kind: 'none' }
+      };
+      const outs = enumerateOutputs(f);
+      const present = outs.filter((o) => o.monitor);
+      const pinned = outs.find((o) => String(o.index) === current);
+      if (pinned && pinned.monitor) return null;               // pinned at a live display
+      return {
+        evidence: pinned
+          ? `output_name = ${current} is ${pinned.connector}, which is not being driven.`
+          : `output_name = ${current}, and there is no output with that index.`,
+        detail: present.length <= 1
+          ? 'With one display there is nothing to choose between, so the pin should simply go.'
+          : `Present: ${present.map((o) => `${o.index} = ${o.connector}`).join('; ')}.`,
+        fix: present.length <= 1
+          ? { kind: 'unpin-output' }
+          : { kind: 'sunshine-conf', changes: { output_name: String(present[0].index) } }
+      };
+    }
+  },
+
+  {
+    id: 'output-pinned-with-one-display',
+    title: 'Sunshine is pinned to an index it does not need',
+    severity: SEVERITY.DEGRADED,
+    // A pin on a single-display machine cannot help and can only go wrong
+    // later, when a monitor is plugged in or taken away and the numbering
+    // moves under it.
+    detect: (f) => {
+      if (!f.sunshine.installed) return null;
+      const current = sunshineKey(f, 'output_name');
+      if (current === null) return null;
+      const present = enumerateOutputs(f).filter((o) => o.monitor);
+      if (present.length !== 1) return null;
+      const pinned = enumerateOutputs(f).find((o) => String(o.index) === current);
+      if (!pinned || !pinned.monitor) return null;             // the stale fault covers it
+      return {
+        evidence: `output_name = ${current}, and ${present[0].connector} is the only display.`,
+        detail: 'The index moves whenever a display is added or removed, so a pin that is not ' +
+                'needed is only a way for this to break later.',
+        fix: { kind: 'unpin-output' }
+      };
+    }
+  },
+
+  {
     id: 'output-not-pinned',
     title: 'Sunshine is streaming a monitor you did not choose',
     severity: SEVERITY.DEGRADED,
@@ -137,8 +265,9 @@ const FAULTS = [
     // connector name, so the obvious value does nothing at all.
     detect: (f) => {
       if (!f.sunshine.installed) return null;
+      // One display is the normal case and needs no pin at all.
       const outs = enumerateOutputs(f);
-      if (outs.length < 2) return null;
+      if (outs.filter((o) => o.monitor).length < 2) return null;
       const current = sunshineKey(f, 'output_name');
       const best = defaultOutput(f);
       if (current !== null && best && String(best.index) === current) return null;
@@ -177,7 +306,7 @@ const FAULTS = [
         evidence: `output_name = ${target}, which is a compositor-side virtual output.`,
         detail: 'KMS capture reads real scanout buffers and cannot see a headless output. ' +
                 'Use a forced connector with a synthetic EDID instead.',
-        fix: { kind: 'use-phantom-instead' }
+        fix: { kind: 'target-real-monitor' }
       };
     }
   },
@@ -345,32 +474,6 @@ const FAULTS = [
   },
 
   {
-    id: 'phantom-not-armed',
-    title: 'No phantom stream display',
-    severity: SEVERITY.INFO,
-    detect: (f) => {
-      // Only worth mentioning when the phantom is the chosen strategy. Under
-      // the default it is an alternative, not something missing.
-      if ((f.settings?.strategy ?? 'resize') !== 'phantom') return null;
-      const forced = /drm\.edid_firmware=/.test(f.phantom.kernelCmdline ?? '');
-      if (forced) return null;
-      const card = displayCard(f);
-      const spares = card?.spareConnectors ?? [];
-      if (!spares.length) return {
-        evidence: 'No spare connector on the card that drives the displays.',
-        detail: 'A phantom display needs an unused physical connector to force on.',
-        unknown: false,
-        fix: { kind: 'none' }
-      };
-      return {
-        evidence: `No drm.edid_firmware on the kernel command line. Spare connectors on ${card.card}: ${spares.join(', ')}.`,
-        detail: 'Without it, streaming has to use a real monitor at its real resolution.',
-        fix: { kind: 'arm-phantom', card: card.card, candidates: spares }
-      };
-    }
-  },
-
-  {
     id: 'nvenc-without-cuda',
     title: 'NVENC is round-tripping every frame through system memory',
     severity: SEVERITY.DEGRADED,
@@ -396,128 +499,6 @@ const FAULTS = [
         detail: 'Frames go GPU -> RAM -> GPU instead of staying in VRAM. ' +
                 'Streaming works; it costs latency. Fixing it needs a CUDA-enabled build.',
         fix: { kind: 'none' }
-      };
-    }
-  },
-
-  {
-    id: 'phantom-armed-but-absent',
-    onlyWhenPhantom: true,
-    title: 'The phantom display is armed but the compositor does not have it up',
-    severity: SEVERITY.BLOCKER,
-    // Worth a blocker because of when Sunshine reads its configuration. It
-    // resolves output_name as the service starts, not as a session begins,
-    // so a phantom that is down at that moment makes every launch fail with
-    // "Couldn't find monitor [N]" and a 503 to the client, before any
-    // prep-cmd could raise it. Measured.
-    detect: (f) => {
-      const forced = /drm\.edid_firmware=/.test(f.phantom.kernelCmdline ?? '');
-      if (!forced) return null;                      // phantom-not-armed covers it
-      // A compositor we could not reach is not a compositor that said no.
-      // Run outside the graphical session, hyprctl answers nothing and the
-      // monitor list is null; reporting that as "the phantom is down" is a
-      // false blocker, and a false blocker is worse than no answer.
-      if (f.compositor.monitors === null || f.compositor.monitors === undefined) {
-        return {
-          title: 'Could not check whether the phantom display is up',
-          evidence: 'The compositor did not answer, so there is nothing to report either way.',
-          detail: 'Run this inside the graphical session to get an answer.',
-          unknown: true,
-          fix: { kind: 'none' }
-        };
-      }
-      const outs = enumerateOutputs(f);
-      const ph = outs.find((o) => o.isPhantom);
-      if (!ph) return null;
-      if (ph.monitor) return null;                   // compositor has it
-      return {
-        evidence: `${ph.connector} carries our EDID but the compositor is not driving it.`,
-        detail: 'Sunshine binds its capture output at service start, so a phantom that is ' +
-                'down then breaks every launch. Bring it up before Sunshine.',
-        fix: { kind: 'park-phantom', connector: ph.connector }
-      };
-    }
-  },
-
-  {
-    id: 'phantom-holds-a-user-workspace',
-    onlyWhenPhantom: true,
-    title: 'The phantom display has taken one of your workspaces',
-    severity: SEVERITY.DEGRADED,
-    // Hyprland gives a new output the first free workspace. Arming a phantom
-    // therefore moves one of the user's workspaces onto a monitor they
-    // cannot see, and switching to it loses windows into the void. Observed:
-    // it took workspace 2.
-    detect: (f) => {
-      // Without a workspace list there is nothing to judge, and guessing
-      // would invent a fault on a machine that is fine.
-      if (!Array.isArray(f.compositor.workspaces)) return null;
-      const outs = enumerateOutputs(f);
-      const ph = outs.find((o) => o.isPhantom);
-      if (!ph || !ph.monitor) return null;
-      const reserved = 11;
-      const held = f.compositor.workspaces.filter((w) => w.monitor === ph.connector);
-      if (!held.length) return null;
-      const stranded = held.filter((w) => w.id !== reserved);
-      if (!stranded.length) return null;
-      return {
-        evidence: `${ph.connector} is holding ${stranded.map((w) => `workspace ${w.id}`).join(', ')}.`,
-        detail: 'That workspace lives on a monitor you cannot see; switching to it sends windows nowhere.',
-        fix: { kind: 'park-phantom', connector: ph.connector }
-      };
-    }
-  },
-
-  {
-    id: 'phantom-touches-the-desktop',
-    onlyWhenPhantom: true,
-    title: 'The phantom display is adjacent to a real monitor',
-    severity: SEVERITY.DEGRADED,
-    // Hyprland moves the pointer between monitors by adjacency, so a phantom
-    // placed beside the desktop catches the cursor and it disappears onto an
-    // invisible screen.
-    detect: (f) => {
-      if (!Array.isArray(f.compositor.monitors)) return null;
-      const outs = enumerateOutputs(f);
-      const ph = outs.find((o) => o.isPhantom);
-      if (!ph || !ph.monitor) return null;
-      const others = f.compositor.monitors.filter((m) => m.name !== ph.connector);
-      if (!others.length) return null;
-      const phLeft = ph.monitor.x;
-      const touching = others.filter((m) => {
-        const right = m.x + Math.round(m.width / (m.scale || 1));
-        return Math.abs(right - phLeft) < 2 || Math.abs(m.x - (phLeft + Math.round(ph.monitor.width / (ph.monitor.scale || 1)))) < 2;
-      });
-      if (!touching.length) return null;
-      return {
-        evidence: `${ph.connector} sits at x=${phLeft}, flush against ${touching.map((m) => m.name).join(', ')}.`,
-        detail: 'The pointer will slide onto a monitor that is not there.',
-        fix: { kind: 'park-phantom', connector: ph.connector }
-      };
-    }
-  },
-
-  {
-    id: 'phantom-not-parked-at-login',
-    onlyWhenPhantom: true,
-    title: 'The phantom will come back unparked after a reboot',
-    severity: SEVERITY.DEGRADED,
-    // Parking is runtime state. Hyprland re-reads its config on every start,
-    // and on this machine that config is rewritten by a bar panel which
-    // saves the phantom wherever it last sat. Without the login unit, every
-    // reboot restores the adjacency and the stolen workspace.
-    detect: (f) => {
-      const forced = /drm\.edid_firmware=/.test(f.phantom.kernelCmdline ?? '');
-      if (!forced) return null;
-      const svc = f.phantom.parkService ?? {};
-      if (svc.installed && svc.enabled === 'enabled') return null;
-      return {
-        evidence: svc.installed
-          ? `The park service exists but is ${svc.enabled}.`
-          : 'No login service parks the phantom.',
-        detail: 'Hyprland re-applies its config at every start, so the phantom returns ' +
-                'beside the desktop holding one of your workspaces.',
-        fix: { kind: 'install-park-service' }
       };
     }
   },

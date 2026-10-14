@@ -35,33 +35,55 @@ stop:
 
 All three are detected and fixed by name. See [docs/RECIPES.md](docs/RECIPES.md).
 
-## The phantom display
+## Getting the client's resolution
 
 Streaming your actual 3440x1440 desktop to a 1280x800 handheld wastes most of
-your bitrate on black bars, and the Steam Remote Play trick of changing your
-monitor's resolution rearranges your desktop every time you play.
+your bitrate on black bars. So the host has to scan out at the resolution the
+client asked for, for as long as the session lasts.
 
-The obvious answer is a virtual display, and the obvious way to get one does
-not work: a compositor-side headless output (`hyprctl output create headless`)
-has no CRTC, so there is no scanout buffer, so KMS capture cannot see it. That
-is the one capture path that works on NVIDIA, so headless outputs are a dead
-end here.
+Clarity Stream sets the streamed monitor to that resolution when a stream
+starts and puts it back exactly as it was when the stream ends. It records the
+previous mode, position and scale before changing anything, and keeps that on
+disk rather than in memory, so a crash mid-session does not lose the way back.
+If the host has no mode of the shape the client asked for, it leaves the
+display alone and lets the client scale, which is worse-looking and not broken.
 
-Clarity Stream takes an unused physical connector instead and forces it on with
-a synthetic EDID that it generates for exactly the resolution your client asked
-for. The kernel believes there is a monitor on that port. The compositor gives
-it a real output with a real CRTC and a real scanout buffer. KMS captures it
-without complaint, and your desktop monitors are never touched.
+Yes, the desktop visibly reflows, twice. That is the whole cost, and on a
+machine you are streaming away from you are not looking at it.
 
-Three things about this, learned the hard way and all encoded in the planner:
+**What this used to be, and why it is not any more.** The first answer was a
+phantom display: take an unused physical connector, force it on with a
+synthetic EDID generated for the client's resolution, and let the client have
+a screen of its own while the real desktop stays untouched. It worked. The
+measurements are in [docs/DIAGNOSIS.md](docs/DIAGNOSIS.md).
 
-1. `drm.edid_firmware=` alone is silently ignored by the NVIDIA driver. It
-   only takes effect alongside `video=<CONNECTOR>:e`.
-2. The EDID is read during early boot, so the file has to be inside the
-   initramfs, not merely present on disk.
-3. NVIDIA does not hot-reload a firmware EDID, so arming the phantom costs one
-   reboot. There is no way around that and Clarity Stream says so upfront
-   rather than letting you discover it.
+It was still the wrong trade. It needed a kernel parameter, an EDID in the
+initramfs, and a reboot, because NVIDIA reads a firmware EDID only at boot. It
+needed `video=<CONNECTOR>:e` alongside `drm.edid_firmware=`, which is silently
+ignored on its own. And the compositor would not leave it alone: it took a
+workspace, it sat adjacent to the desktop so the pointer slid onto it, and a
+bar panel rewriting the monitor config put it back where it had been. Each of
+those got a fix, and the fixes needed fixes. Removed in 0.7.0, along with
+every kernel parameter it added.
+
+## Upgrading from 0.6.x, if you armed a phantom display
+
+If you ran a version before 0.7.0 and armed a phantom display, this version no
+longer knows about it, and the kernel parameters are still on your machine.
+Remove them:
+
+```sh
+sudo bash packaging/remove-phantom.sh
+```
+
+It deletes the generated EDID, the bootloader drop-in and the initramfs
+drop-in, rebuilds the initramfs and regenerates the boot entry, and tells you
+if any step fails before you reboot. Nothing else is touched. Reboot when
+convenient; until then the forced connector stays on, because the kernel read
+those parameters at the last boot.
+
+If you never armed one, there is nothing to do. `clarity-stream doctor` will
+tell you either way.
 
 ## Verifying, instead of hoping
 
@@ -97,9 +119,9 @@ is no use on a machine that is showing you a black screen.
 ```
 node bin/clarity-stream doctor              # what would stop a stream, with evidence
 node bin/clarity-stream verify [output]     # measure real pixels
-node bin/clarity-stream phantom 1920x1080   # plan the phantom display
-node bin/clarity-stream edid 1280x800 f.bin # build an EDID on its own
-node bin/clarity-stream boot                # how a kernel param gets added here
+node bin/clarity-stream firewall            # can another machine reach this host
+node bin/clarity-stream apps                # the Moonlight entries this publishes
+node bin/clarity-stream stream-display stop # put a stranded display back
 ```
 
 Nothing in the engine escalates privilege by itself. Anything requiring root is
@@ -108,43 +130,30 @@ call after you approve it.
 
 ## Status
 
-**It works, phantom display and all.** On the development machine, an RTX 4060
-Ti on Hyprland that had never streamed anything but black, Clarity Stream found
-the faults, applied the fixes, armed a display that does not physically exist,
-and a Moonlight client decoded a real picture of it. Both real monitors were
-untouched throughout. Every reading is in
-[docs/DIAGNOSIS.md](docs/DIAGNOSIS.md).
+**It works.** On the development machine, an RTX 4060 Ti on Hyprland that had
+never streamed anything but black, Clarity Stream found the faults, applied
+the fixes, and a Moonlight client decoded a real picture. Measured, not
+assumed: 32.7 standard deviation on a real desktop against a peak of 1 on
+black. Every reading is in [docs/DIAGNOSIS.md](docs/DIAGNOSIS.md).
 
-The phantom stays up rather than being cycled around each stream, which was
-the first design and does not work: Sunshine resolves `output_name` when its
-service starts, so a phantom that is down at that moment makes every launch
-fail with `Couldn't find monitor` and a 503, before any `prep-cmd` can run.
-Instead it is parked 6000px clear of every real monitor, holding a reserved
-workspace of its own, by a login unit Clarity Stream installs. It never writes
-to the user's Hyprland config, which on this machine is rewritten by a bar
-panel anyway.
+A laptop client has paired through the host's own window, streamed, and the
+ultrawide resized to 1920x1080 for the session and returned to 3440x1440
+afterwards.
 
 Working: the probe, the fault catalogue, the diagnosis, the applier for
-everything that does not need root, lossless `sunshine.conf` editing, EDID
-generation (validated against `edid-decode`), the phantom display planner,
-bootloader and initramfs plumbing for Limine, GRUB and systemd-boot, and pixel
-verification.
+everything that does not need root, lossless `sunshine.conf` editing, the
+session resize and its restore, firewall diagnosis for ufw and firewalld on
+both address families, in-app pairing, and pixel verification.
 
 The privileged helper is built: `bin/clarity-stream-helper` validates every
 step of a plan against an allowlist before running any of it, and its refusals
-are tested.
-
-The phantom EDID advertises several modes, not one. NVIDIA reads a firmware
-EDID only at boot, so a single-mode phantom would mean a reboot every time you
-wanted a different client resolution. One EDID carries 1920x1080 preferred,
-2560x1440 as a second detailed timing, and 1600x900, 1280x800, 1280x720 and
-1024x768 as standard timings. All are selectable at runtime.
+are tested. It cannot write a file at all.
 
 Both apps are built.
 
 **The host** (`npm start`) shows what would stop a stream and why, fixes what
-it can without root, manages the phantom, publishes the Moonlight entries, and
-measures real pixels on demand.
+it can without root, pairs clients, publishes the Moonlight entries, stops a
+running session, and measures real pixels on demand.
 
 **The client** (`npm run start:client`) finds hosts on the network, shows which
 are reachable, busy or unpaired, and starts a session in one click with Couch
@@ -217,24 +226,19 @@ Open **Clarity Stream** from your launcher, or run `clarity-stream-host`.
 3. Press **Measure now** whenever you want it to prove the capture is not
    black, rather than tell you it should be fine.
 
-That is enough to stream. The phantom display is optional and worth it.
+That is enough to stream. Nothing else is required, and nothing needs a reboot.
 
-### The phantom display
+### The resolution the client asked for
 
-Streaming your real monitor sends whatever resolution it happens to be, so a
-1080p client gets your ultrawide letterboxed and most of the bitrate goes on
-black bars. A phantom display is an unused port on your graphics card, forced
-on with an EDID Clarity Stream generates, so the client gets its own screen at
-its own resolution and your real monitors are never touched.
+**Publish Clarity entries** also wires up the session resize, so there is
+nothing separate to turn on. When a client starts streaming, the streamed
+monitor changes to the resolution that client chose and changes back when the
+stream ends.
 
-In the host window, under **Phantom display**, pick a spare connector and a
-resolution and press **Prepare it**. It writes out a plan, you run one command
-as root, and you reboot once. The reboot is not avoidable: NVIDIA reads a
-firmware EDID only at boot.
-
-Afterwards press **Keep it parked**, which installs a small user service. That
-matters more than it sounds: parking is runtime state, and anything that makes
-your compositor re-read its config throws it away.
+If you quit the client cleanly the display comes back immediately. If you kill
+it, the display stays small until Sunshine gives up on the session, which takes
+over thirty seconds. `clarity-stream doctor` reports a display left that way,
+and `clarity-stream stream-display stop` puts it back now.
 
 ### If a client says the host is not answering
 
@@ -290,9 +294,9 @@ proprietary driver, Limine with a unified kernel image. Everything in
 
 The parts most likely to need work elsewhere:
 
-- **The phantom display** is the deepest into the system. The bootloader
-  plumbing understands Limine, GRUB and systemd-boot, but only Limine has been
-  run for real. The parking and the workspace reservation are Hyprland-specific.
+- **The session resize** is Hyprland-specific. It drives `hl.monitor` through
+  `hyprctl eval`, because Hyprland under a Lua config refuses `hyprctl
+  keyword` outright. Another compositor needs its own path.
 - **AMD** has one data point now, from a Lenovo laptop with a Lucienne APU
   running the released packages: compositor readback live, no `capture`
   setting needed, and the diagnosis clean apart from the firewall. The

@@ -185,7 +185,7 @@ function openCommands(state, { scope = null } = {}) {
   return [];
 }
 
-// A helper plan, in the same shape the phantom uses, so one privileged path
+// A helper plan, so one privileged path
 // serves both rather than two.
 function planOpen(state, opts = {}) {
   const cmds = openCommands(state, opts);

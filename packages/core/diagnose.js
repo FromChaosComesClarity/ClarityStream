@@ -13,18 +13,16 @@ const ORDER = [
   'kms-missing-capability',
   'nvidia-wlr-capture-is-black',
   'capture-aimed-at-idle-card',
+  'capture-bound-to-undriven-connector',
+  'output-pin-is-stale',
+  'output-pinned-with-one-display',
   'headless-output-cannot-be-captured',
   'ports-blocked-by-firewall',
   'stream-ports-ipv4-only',
   'display-left-resized',
   'stream-resize-not-wired',
-  'phantom-armed-but-absent',
   'output-not-pinned',
   'encoder-not-pinned-nvenc',
-  'phantom-not-armed',
-  'phantom-holds-a-user-workspace',
-  'phantom-touches-the-desktop',
-  'phantom-not-parked-at-login',
   'service-not-running-as-user',
   'moonlight-missing'
 ];
@@ -32,9 +30,6 @@ const ORDER = [
 function diagnose(facts) {
   const findings = [];
   for (const fault of FAULTS) {
-    // The phantom's problems are only problems for someone using the phantom.
-    // Under the resize strategy an armed-but-down phantom is simply a leftover.
-    if (fault.onlyWhenPhantom && (facts.settings?.strategy ?? 'resize') !== 'phantom') continue;
     let hit;
     try {
       hit = fault.detect(facts);

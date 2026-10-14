@@ -15,10 +15,6 @@ const DEFAULTS = {
   //   resize   set the streamed monitor to the client's resolution for the
   //            duration of the session, and put it back afterwards. The
   //            desktop visibly reflows, twice. Nothing to install, no reboot.
-  //   phantom  force an unused connector on with a generated EDID, so the
-  //            client gets a screen of its own and the desktop is untouched.
-  //            Costs a kernel parameter and a reboot, and the compositor has
-  //            opinions about the extra output.
   //   none     stream whatever the monitor already is and let the client
   //            scale or letterbox.
   strategy: 'resize'

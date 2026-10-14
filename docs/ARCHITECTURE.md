@@ -8,36 +8,36 @@ packages/core/        the engine, no UI, no privilege, runnable over SSH
   faults.js           the Recipe catalogue
   diagnose.js         facts -> findings -> an ordered plan
   sunshine-conf.js    lossless read/modify/write of sunshine.conf
-  edid.js             synthesises an EDID 1.4 base block
-  cvt.js              VESA CVT reduced-blanking timings
-  phantom.js          plans the phantom display, snapshots monitor state
-  bootloader.js       Limine, GRUB and systemd-boot, as drop-ins
+  stream-display.js   resizes the streamed display for a session, and back
   verify.js           measures real pixels and interprets the result
-  hypr.js             drives Hyprland: park the phantom, pin the client
+  hypr.js             drives Hyprland: set a mode, pin the client window
   outputs.js          which monitor Sunshine actually streams, by index
+  firewall.js         whether another machine can reach this host at all
+  sunshine-api.js     pairing and session control over Sunshine's own API
   sunshine-apps.js    the Moonlight app list, preserving what the user owns
   clarity-app.js      finds Clarity.AppImage instead of assuming where it is
-  phantom-service.js  the login unit that parks the phantom
+  settings.js         host settings both the CLI and the window read
   apply.js            runs the fixes that need no root
 bin/clarity-stream    headless CLI over all of the above
 bin/clarity-stream-helper  the only part that runs as root
 apps/host/            Electron host UI, a face over packages/core
-apps/host/            Electron host UI
 apps/client/          Electron client app
 ```
 
 ## Three rules the engine follows
 
 **The engine never escalates.** Anything needing root comes back as a
-declarative plan: a list of `write-file`, `remove-file` and `run` steps. The UI
+declarative plan: a list of `remove-file`, `run` and `setcap` steps. The UI
 shows the plan in full, the user approves it, and one privileged helper
 executes it. Nothing shells out to `sudo` mid-diagnosis, and nothing is
-modified as a side effect of looking.
+modified as a side effect of looking. The helper cannot write a file at all:
+the phantom display was the only thing that needed that, and the step kind
+went with it.
 
 **Nothing the user owns gets clobbered.** `sunshine.conf` is patched line by
 line, preserving comments, ordering and every key we do not recognise, with a
-backup kept beside it. Kernel parameters and initramfs additions are drop-in
-files that undo by deletion. No distribution-owned file is edited.
+backup kept beside it. No distribution-owned file is edited, and nothing is
+added to the kernel command line or the initramfs.
 
 **A fact that could not be read is not a fact.** Probes return `null` and
 detectors return `unknown` rather than assuming the good case. `getcap`
@@ -46,12 +46,22 @@ and those are reported differently.
 
 ## Decisions, and why
 
-**Phantom display on a spare connector, not a headless output.** A
-compositor-side headless output has no CRTC, so KMS capture cannot see it, and
-KMS is the only capture path that is not black on NVIDIA. Forcing an unused
-physical connector with a synthetic EDID gives a real CRTC at exactly the
-client's resolution while leaving the desktop monitors untouched. Costs one
-reboot to arm, which is stated upfront.
+**Resize the real display, do not invent a second one.** The client needs the
+host to scan out at the resolution the client asked for, or the picture is
+scaled. The first answer was a phantom display: force an unused connector on
+with a synthesised EDID, and the client gets a screen of its own while the
+desktop is untouched. It worked and it was the wrong trade. It cost a kernel
+parameter, a reboot per resolution, and a compositor that kept forming
+opinions about the extra output. What ships instead sets the streamed
+monitor's mode for the duration of the session and puts it back afterwards.
+The desktop visibly reflows, twice, and that is the whole cost. Nothing is
+installed and nothing needs undoing at boot.
+
+**One display is the default assumption.** `output_name` is a positional
+index, so pinning it on a machine with one monitor cannot help and breaks the
+moment a monitor is plugged in or taken away. With one display Clarity Stream
+leaves it unset and says why. The pin is for machines that genuinely have a
+choice to make.
 
 **Host and client are both full applications.** The host side carries the
 weight: probe, diagnose, fix, verify, publish, pair. The client is its own app
@@ -138,13 +148,9 @@ the window was tiled to 688px, which is just a normal tile on a 3440 monitor.
   Clarity Stream, instead of in a browser.
 - The Couch Mode app entry, written into `apps.json` without disturbing
   entries the user added.
-- A persistent home for the parking rules that does not depend on a login
-  unit. The unit works, but it is a second thing that can be disabled.
-- Client-adaptive resolution: the client reports what it wants, the host
-  regenerates the phantom EDID to match. The reboot requirement makes this
-  an arm-once-per-resolution affair, so the client should pick from a small set
-  of armed modes rather than anything arbitrary.
-- The AMD fallback worth measuring: this machine's unused Raphael iGPU could
-  host the phantom connector and do VAAPI encoding, since AMD KMS capture is
-  not affected by the NVIDIA readback problem. It costs a cross-GPU copy per
-  frame. Worth measuring before recommending, not before.
+- Choosing the streamed monitor by name rather than by index, if Sunshine ever
+  grows a way to say it. The index is what Sunshine accepts today, and it is
+  positional, which is the whole reason `output-pin-is-stale` has to exist.
+- Recovering a stranded resize faster than Sunshine's session timeout. A
+  hard-killed client leaves the display small until Sunshine gives up on the
+  session, which is over thirty seconds of an unusable desktop.

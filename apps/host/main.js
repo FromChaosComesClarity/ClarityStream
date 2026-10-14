@@ -17,12 +17,8 @@ const { probe } = require('../../packages/core/probe');
 const { diagnose } = require('../../packages/core/diagnose');
 const { applyAll, restartUserService } = require('../../packages/core/apply');
 const { enumerateOutputs, defaultOutput } = require('../../packages/core/outputs');
-const phantom = require('../../packages/core/phantom');
-const phantomService = require('../../packages/core/phantom-service');
-const hypr = require('../../packages/core/hypr');
 const verify = require('../../packages/core/verify');
 const sunshineApps = require('../../packages/core/sunshine-apps');
-const phantomScript = require('../../packages/core/phantom-script');
 const clarityApp = require('../../packages/core/clarity-app');
 const paths = require('../../packages/core/paths');
 const sunshineApi = require('../../packages/core/sunshine-api');
@@ -126,7 +122,6 @@ function snapshot({ fresh = false } = {}) {
   const f = facts({ fresh });
   const result = diagnose(f);
   const outputs = enumerateOutputs(f);
-  const ph = outputs.find((o) => o.isPhantom) ?? null;
   const streamedIndex = f.sunshine.confRaw?.match(/^\s*output_name\s*=\s*(\d+)/m)?.[1] ?? null;
 
   let appsDoc = { apps: [] };
@@ -158,25 +153,11 @@ function snapshot({ fresh = false } = {}) {
     moonlight: f.moonlight,
     outputs: outputs.map((o) => ({
       index: o.index, connector: o.connector, label: o.label,
-      isPhantom: o.isPhantom, connectorId: o.connectorId,
+      connectorId: o.connectorId,
       width: o.monitor?.width ?? null, height: o.monitor?.height ?? null,
       present: Boolean(o.monitor),
       streamed: streamedIndex !== null && String(o.index) === streamedIndex
     })),
-    phantom: ph ? {
-      connector: ph.connector,
-      present: Boolean(ph.monitor),
-      position: ph.monitor ? `${ph.monitor.x}x${ph.monitor.y}` : null,
-      mode: ph.monitor ? `${ph.monitor.width}x${ph.monitor.height}@${Math.round(ph.monitor.refresh)}` : null,
-      modes: (() => { const v = phantom.verifyArmed(ph.connector); return v.modes ?? []; })(),
-      workspaces: (f.compositor.workspaces ?? []).filter((w) => w.monitor === ph.connector).map((w) => w.id),
-      service: f.phantom.parkService
-    } : null,
-    phantomCandidates: (() => {
-      const c = phantom.candidates(f);
-      return { card: c.card?.card ?? null, spare: c.ranked };
-    })(),
-    armed: /drm\.edid_firmware=/.test(f.phantom.kernelCmdline ?? ''),
     findings: result.findings,
     streamable: result.streamable,
     summary: result.summary,
@@ -215,26 +196,6 @@ ipcMain.handle('service:restart', () => {
   return r;
 });
 
-ipcMain.handle('phantom:plan', (_e, { width, height, refresh, connector } = {}) => {
-  const f = facts({ fresh: true });
-  const plan = phantom.planArm(f, { width, height, refresh, connector });
-  if (!plan.ok) return plan;
-  const os = require('node:os');
-  const dir = path.join(os.homedir(), '.cache', 'clarity-stream');
-  fs.mkdirSync(dir, { recursive: true });
-  const planFile = path.join(dir, 'phantom-plan.json');
-  fs.writeFileSync(planFile, JSON.stringify(
-    phantom.toHelperPlan(plan, `Arm the phantom display on ${plan.connector} (${width}x${height})`), null, 2));
-  return {
-    ...plan,
-    edidBytes: undefined,                      // not serialisable, not needed
-    planFile,
-    // Packaged, this is one fixed path. In a checkout it has to name the
-    // interpreter, because sudo resets PATH past a per-user Node.
-    command: paths.helperCommand(planFile)
-  };
-});
-
 ipcMain.handle('firewall:plan', () => {
   const firewall = require('../../packages/core/firewall');
   const st = firewall.detect();
@@ -246,35 +207,6 @@ ipcMain.handle('firewall:plan', () => {
   const planFile = path.join(dir, 'firewall-plan.json');
   fs.writeFileSync(planFile, JSON.stringify(plan, null, 2));
   return { ...plan, planFile, command: paths.helperCommand(planFile) };
-});
-
-ipcMain.handle('phantom:park', () => {
-  const f = facts({ fresh: true });
-  const ph = enumerateOutputs(f).find((o) => o.isPhantom);
-  if (!ph) return { ok: false, reason: 'No phantom display is armed.' };
-  const r = hypr.park(ph.connector, { mode: `${ph.preferredMode ?? '1920x1080'}@60` });
-  cache.at = 0;
-  return r;
-});
-
-ipcMain.handle('phantom:unpark', () => {
-  const f = facts({ fresh: true });
-  const ph = enumerateOutputs(f).find((o) => o.isPhantom);
-  if (!ph) return { ok: false, reason: 'No phantom display is armed.' };
-  const r = hypr.disable(ph.connector);
-  cache.at = 0;
-  return r;
-});
-
-ipcMain.handle('phantom:installService', () => {
-  const f = facts();
-  const r = phantomService.install({
-    nodePath: process.execPath,
-    cliPath: paths.cliPath(),
-    sunshineUnit: f.sunshine.unitName
-  });
-  cache.at = 0;
-  return r;
 });
 
 // Two frames a moment apart, because one cannot tell a stream from a still.
