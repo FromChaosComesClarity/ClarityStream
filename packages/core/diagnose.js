@@ -12,6 +12,7 @@ const ORDER = [
   'nvidia-modeset-disabled',
   'kms-missing-capability',
   'nvidia-wlr-capture-is-black',
+  'wireless-link-cannot-carry-a-stream',
   'capture-aimed-at-idle-card',
   'capture-bound-to-undriven-connector',
   'output-pin-is-stale',
@@ -24,6 +25,7 @@ const ORDER = [
   'output-not-pinned',
   'encoder-not-pinned-nvenc',
   'service-not-running-as-user',
+  'sunshine-cannot-raise-its-priority',
   'moonlight-missing'
 ];
 
@@ -74,7 +76,7 @@ function diagnose(facts) {
 
   let summary;
   if (blockers.length) {
-    summary = `${blockers.length} blocker${blockers.length === 1 ? '' : 's'}: a stream would fail or show black.`;
+    summary = `${blockers.length} blocker${blockers.length === 1 ? '' : 's'}: a stream would fail, stall or show black.`;
   } else if (unknowns.length) {
     summary = `Nothing is known to be wrong, but ${unknowns.length} check${unknowns.length === 1 ? '' : 's'} could not be made.`;
   } else {

@@ -233,6 +233,21 @@ function probeSunshine() {
   // `Alias=sunshine.service`, but an alias is only created when the unit is
   // enabled. So asking about sunshine.service on a fresh install answers
   // "not-found" and a fix that names it would fail.
+  // Read from the running process: limits.conf, PAM and the unit all get a
+  // say, and only the result matters.
+  let maxNicePriority = null;
+  try {
+    const pid = tryExec('pgrep', ['-x', 'sunshine']).stdout.trim().split('\n')[0];
+    if (pid) {
+      const limits = readText(`/proc/${pid}/limits`) ?? '';
+      const row = limits.split('\n').find((l) => /Max nice priority/i.test(l));
+      if (row) {
+        const m = row.match(/Max nice priority\s+(\S+)/);
+        if (m && m[1] !== 'unlimited') maxNicePriority = Number(m[1]);
+      }
+    }
+  } catch { /* leave null: not knowing is not a fault */ }
+
   const unitName = discoverSunshineUnit();
   const unit = unitName ? tryExec('systemctl', ['--user', 'is-enabled', unitName]) : { ok: false, stdout: '' };
   const active = unitName ? tryExec('systemctl', ['--user', 'is-active', unitName]) : { ok: false, stdout: '' };
@@ -251,6 +266,7 @@ function probeSunshine() {
     confRaw: confPath ? readText(confPath) : null,
     unitName,
     unitFound: Boolean(unitName),
+    maxNicePriority,
     cudaLinked,
     unitEnabled: unit.ok ? unit.stdout.trim() : (unit.stdout || '').trim() || 'unknown',
     unitActive: active.ok ? active.stdout.trim() : (active.stdout || '').trim() || 'unknown'
@@ -298,6 +314,7 @@ function probe() {
     compositor,
     sunshine: probeSunshine(),
     firewall: require('./firewall').detect(),
+    network: require('./network').detect(),
     settings: require('./settings').read(),
     strandedResize: require('./stream-display').strandedResize(),
     moonlight: probeMoonlight()

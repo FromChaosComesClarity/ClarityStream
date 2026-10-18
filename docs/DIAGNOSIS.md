@@ -505,3 +505,80 @@ Which made the allowlist question concrete: the helper still permitted
 caller. They are gone, with tests that refuse all five commands and both file
 step kinds by name. The helper opens ports and sets a capability, and that is
 the whole of what it can do.
+
+# Part six: the stream was unusable, and capture had nothing to do with it
+
+2026-10-18. The owner reported high latency, constant freezes and dropped
+frames from this host, the NVIDIA desktop, while the AMD laptop was fine.
+
+Every capture-side check passed. `doctor` was clean apart from
+`nvenc-without-cuda`, `verify` measured a live picture, Sunshine bound the
+right connector and created `hevc_nvenc` without complaint. The obvious
+suspect was the missing CUDA, since the log says so on every start:
+
+```
+Warning: Attempting to use NVENC without CUDA support. Reverting back to GPU -> RAM -> GPU
+```
+
+It was not the cause. Here is what the host was actually streaming over:
+
+```
+enp12s0        wired  down  carrier 0        <- a port with no cable in it
+wlp16s0f4u2i2  wifi   up    USB Realtek 0bda:c820
+
+  signal:      -74 dBm, drifting to -77
+  tx bitrate:  87.8 MBit/s VHT-MCS 2 80MHz VHT-NSS 1
+  rx bitrate:  12.0 MBit/s
+```
+
+One spatial stream, MCS 2, on a USB dongle, at a signal where a 5GHz link
+stops holding its modulation and starts renegotiating. The negotiated rate
+moved between consecutive reads: 87.8/12, then 117/175.5. That movement is the
+freeze.
+
+And Sunshine had been asked for **79 Mbps** in one of those sessions:
+
+```
+[23:06:57]: Info: Streaming bitrate is 78988000
+```
+
+Against a link whose nominal ceiling was 87.8 Mbit/s and whose real throughput
+was a fraction of that. There is no encoder setting that survives this.
+
+A third contributor, smaller and real:
+
+```
+Warning: setpriority failed for nice -15: Permission denied
+```
+
+`/proc/<pid>/limits` gives `Max nice priority 0`, so Sunshine's capture and
+encode threads are refused the priority they ask for and queue behind ordinary
+work. `CapEff` is empty; `CapPrm` has `cap_sys_admin` and `cap_sys_nice`, and
+Sunshine raises the first for KMS but the nice ceiling is a separate gate.
+
+## What was built from this
+
+`wireless-link-cannot-carry-a-stream`, a blocker, and
+`sunshine-cannot-raise-its-priority`, degraded.
+
+The first reads the interface packets actually leave by, rather than guessing
+from interface names, and reports the measured signal, spatial streams, band
+and adapter type. It names an unplugged wired port when one exists, because
+that is a fix that works and a bitrate reduction is only a trade. It stays
+quiet on a good wireless link, because wireless is not itself a fault, and it
+reports unknown rather than guessing when `iw` cannot read the link.
+
+The blocker summary was widened from "a stream would fail or show black" to
+"a stream would fail, stall or show black". A link too weak to carry a stream
+produces neither a failure nor a black picture, and the old wording would have
+been a confident description of the wrong symptom.
+
+## The lesson, which is the same one as part five
+
+The capture path had been the whole focus of this project because the capture
+path was where the original fault was. Everything built here measures pixels,
+connectors and GPUs. None of it looked at the network the pixels then have to
+cross, so the doctor reported a healthy host while the stream was unusable.
+
+A tool that proves the picture is not black, and says nothing about whether it
+can reach anybody, is answering half the question with full confidence.

@@ -13,6 +13,7 @@ packages/core/        the engine, no UI, no privilege, runnable over SSH
   hypr.js             drives Hyprland: set a mode, pin the client window
   outputs.js          which monitor Sunshine actually streams, by index
   firewall.js         whether another machine can reach this host at all
+  network.js          the link this host streams over, and what it can carry
   sunshine-api.js     pairing and session control over Sunshine's own API
   sunshine-apps.js    the Moonlight app list, preserving what the user owns
   clarity-app.js      finds Clarity.AppImage instead of assuming where it is

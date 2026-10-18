@@ -156,6 +156,9 @@ function describeFix(fix) {
     case 'wire-resize': return 'press Publish below, which also sets the resize step';
     case 'unpin-output': return 'remove output_name; with one display it is only a liability';
     case 'reboot-to-clear-connectors': return 'reboot: the kernel is holding a mode on a port with nothing on it';
+    case 'plug-in-ethernet': return `plug a cable into ${fix.ports.join(' or ')}`;
+    case 'lower-client-bitrate': return 'lower the bitrate on the client until it holds';
+    case 'raise-nice-limit': return 'allow Sunshine to run at a negative nice value';
     case 'modprobe-conf': return `write "${fix.line}" to ${fix.path}`;
     case 'target-real-monitor': return 'aim capture at a monitor that is actually being driven';
     default: return fix.kind;
@@ -185,6 +188,184 @@ function drawOutputs(s) {
     if (o.streamed) li.append(el('span', 'tag streamed', 'streaming'));
     list.append(li);
   }
+}
+
+async function drawSession() {
+  let s;
+  try { s = await window.cs.sessionState(); }
+  catch { return; }
+
+  const card = $('sessionCard');
+  const dot = $('sessionDot');
+  const stop = $('stopSession');
+
+  if (!s.ok) {
+    card.classList.remove('live');
+    dot.className = 'beacon unknown';
+    $('sessionTitle').textContent = 'Cannot tell whether anything is streaming';
+    $('sessionSub').textContent = s.reason ?? 'Sunshine did not answer.';
+    stop.classList.add('hidden');
+    return;
+  }
+
+  if (!s.busy) {
+    card.classList.remove('live');
+    dot.className = 'beacon off';
+    $('sessionTitle').textContent = 'Nothing is streaming';
+    $('sessionSub').textContent = 'The host is free for a client to connect.';
+    stop.classList.add('hidden');
+    return;
+  }
+
+  card.classList.add('live');
+  dot.className = 'beacon on';
+  $('sessionTitle').textContent = s.appName ? `Streaming ${s.appName}` : 'A session is running';
+  $('sessionSub').textContent = s.haveCredentials
+    ? 'Closing the window on the client does not end this. Stopping it here does.'
+    : 'Stopping it needs Sunshine\u2019s credentials; set them under Devices below.';
+  stop.classList.toggle('hidden', !s.haveCredentials);
+}
+
+$('stopSession').addEventListener('click', () => withBusy(async () => {
+  const r = await window.cs.closeSession();
+  toast(r.ok ? 'Session stopped.' : (r.reason ?? 'Could not stop it'), !r.ok);
+  await drawSession();
+  // Ending a session runs the undo that puts the display back, so the rest of
+  // the window is now out of date.
+  await refresh();
+}, 'Stopping the session'));
+
+/* --------------------------------------------------------------- devices */
+
+// Pairing, from this side. The client picks a PIN and shows it; this is where
+// it gets typed. Sunshine wants its web credentials to accept one, so the
+// panel has two faces: get those sorted, then pair.
+async function drawPairing() {
+  const body = $('pairingBody');
+  const label = $('pairingState');
+  body.replaceChildren();
+
+  let p;
+  try { p = await window.cs.pairingState(); }
+  catch (err) { body.append(el('p', 'muted', `Could not read pairing state: ${err.message}`)); return; }
+
+  if (!p.sunshineRunning) {
+    label.textContent = 'Sunshine is not running';
+    body.append(el('p', 'muted narrow',
+      'Pairing goes through Sunshine, so it has to be running first. Fix that above and come back.'));
+    return;
+  }
+
+  if (!p.stored || p.credentialsWork === false) {
+    label.textContent = p.stored ? 'credentials rejected' : 'not set up';
+
+    body.append(el('p', 'muted narrow',
+      'To accept a pairing PIN, Clarity Stream needs the username and password for Sunshine\u2019s ' +
+      'own web interface. They are checked before they are saved, and kept ' +
+      (p.encryptionAvailable
+        ? 'in your system keyring.'
+        : 'in a file only you can read. There is no keyring on this machine, so they are not encrypted at rest.')));
+
+    if (!p.sunshineHasCredentials) {
+      body.append(el('p', 'muted narrow',
+        'Sunshine has no credentials yet either. Set them once with: sunshine --creds <username> <password>'));
+    }
+    if (p.stored && p.reason) body.append(el('p', 'muted', p.reason));
+
+    const row = el('div', 'pinrow');
+    const userField = el('label', 'field', 'Username');
+    const user = document.createElement('input');
+    user.type = 'text'; user.autocomplete = 'off'; user.value = p.username ?? '';
+    userField.append(user);
+
+    const passField = el('label', 'field', 'Password');
+    const pass = document.createElement('input');
+    pass.type = 'password'; pass.autocomplete = 'off';
+    passField.append(pass);
+
+    const save = el('button', 'primary', 'Save');
+    save.addEventListener('click', () => withBusy(async () => {
+      const r = await window.cs.saveCredentials({ username: user.value.trim(), password: pass.value });
+      if (!r.ok) { toast(r.reason, true); return; }
+      toast(r.encrypted ? 'Saved to your keyring' : 'Saved (not encrypted: no keyring here)');
+      await drawPairing();
+    }, 'Saving credentials'));
+
+    const open = el('button', 'ghost', 'Open the web interface');
+    open.addEventListener('click', () => window.cs.openExternal(p.webUrl));
+
+    row.append(userField, passField, save, open);
+    body.append(row);
+    return;
+  }
+
+  label.textContent = p.clients.length
+    ? `${p.clients.length} paired` : 'none paired yet';
+
+  body.append(el('p', 'muted narrow',
+    'On the device you want to play from, press Pair. It shows four digits. Type them here.'));
+
+  const row = el('div', 'pinrow');
+  const pinField = el('label', 'field', 'PIN');
+  const pin = document.createElement('input');
+  pin.type = 'text'; pin.id = 'pinInput'; pin.inputMode = 'numeric';
+  pin.maxLength = 4; pin.autocomplete = 'off'; pin.placeholder = '····';
+  pinField.append(pin);
+
+  const nameField = el('label', 'field', 'Call it');
+  const name = document.createElement('input');
+  name.type = 'text'; name.placeholder = 'Laptop'; name.autocomplete = 'off';
+  nameField.append(name);
+
+  const accept = el('button', 'primary', 'Pair it');
+  const send = () => withBusy(async () => {
+    const r = await window.cs.submitPin({ pin: pin.value.trim(), deviceName: name.value.trim() });
+    if (!r.ok) { toast(r.reason, true); return; }
+    toast('Paired.');
+    pin.value = ''; name.value = '';
+    await drawPairing();
+  }, 'Pairing');
+
+  accept.addEventListener('click', send);
+  // Four digits typed from another screen: pressing Enter is the natural end
+  // of that, and so is simply finishing the fourth digit.
+  pin.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  pin.addEventListener('input', () => {
+    pin.value = pin.value.replace(/\D/g, '').slice(0, 4);
+    if (pin.value.length === 4) accept.focus();
+  });
+
+  row.append(pinField, nameField, accept);
+  body.append(row);
+
+  if (p.clients.length) {
+    const list = el('ul', 'devices');
+    for (const c of p.clients) {
+      const li = el('li');
+      li.append(el('span', 'device-name', c.name));
+      li.append(el('span', 'device-id', c.uuid.slice(0, 8)));
+      const drop = el('button', 'ghost', 'Remove');
+      drop.addEventListener('click', () => withBusy(async () => {
+        const r = await window.cs.unpair({ uuid: c.uuid });
+        toast(r.ok ? `Removed ${c.name}` : (r.reason ?? 'Could not remove it'), !r.ok);
+        await drawPairing();
+      }, 'Removing'));
+      li.append(drop);
+      list.append(li);
+    }
+    body.append(list);
+  }
+
+  const forget = el('button', 'ghost', 'Forget the saved credentials');
+  forget.addEventListener('click', () => withBusy(async () => {
+    await window.cs.forgetCredentials();
+    toast('Credentials forgotten');
+    await drawPairing();
+  }, 'Forgetting'));
+  const footer = el('div', 'row');
+  footer.style.marginTop = '14px';
+  footer.append(forget);
+  body.append(footer);
 }
 
 function drawApps(s) {

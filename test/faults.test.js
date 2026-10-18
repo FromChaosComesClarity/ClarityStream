@@ -40,9 +40,19 @@ function healthy() {
       unitFound: true, unitName: 'app-dev.lizardbyte.app.Sunshine.service',
       unitEnabled: 'enabled', unitActive: 'active', cudaLinked: true,
       confRaw: 'capture = kms\nadapter_name = /dev/dri/renderD128\nencoder = nvenc\noutput_name = 2\n',
-      logReadable: true, boundConnectorId: 830, kmsListEmpty: false
+      logReadable: true, boundConnectorId: 830, kmsListEmpty: false,
+      maxNicePriority: 40
     },
-    moonlight: { installed: true }
+    moonlight: { installed: true },
+    network: {
+      routeVia: 'enp12s0',
+      active: { name: 'enp12s0', wireless: false, carrier: true, usb: false, speedMbit: 1000 },
+      link: null,
+      streamsOverWireless: false,
+      idleWiredPorts: [],
+      liveWiredPorts: ['enp12s0'],
+      interfaces: []
+    }
   };
 }
 
@@ -165,6 +175,100 @@ test('an unreachable compositor cannot confirm the bound port either', () => {
   assert.strictEqual(hit.unknown, true);
   assert.match(hit.title, /could not check/i);
   assert.ok(!diagnose(f).blockers.map((b) => b.id).includes('capture-bound-to-undriven-connector'));
+});
+
+test('a wired host says nothing about the network', () => {
+  assert.strictEqual(byId('wireless-link-cannot-carry-a-stream').detect(healthy()), null);
+});
+
+test('a weak wireless link with a spare ethernet port is a blocker', () => {
+  // Measured on the development machine, which streamed unusably while every
+  // capture-side check passed.
+  const f = healthy();
+  f.network = {
+    routeVia: 'wlp16s0f4u2i2',
+    active: { name: 'wlp16s0f4u2i2', wireless: true, carrier: true, usb: true },
+    link: {
+      readable: true, connected: true, ssid: 'Jose_5G', signalDbm: -74,
+      txBitrateMbit: 87.8, rxBitrateMbit: 12, spatialStreams: 1, freqMhz: 5180, band: '5GHz'
+    },
+    streamsOverWireless: true,
+    idleWiredPorts: ['enp12s0'],
+    liveWiredPorts: [],
+    interfaces: []
+  };
+  const hit = byId('wireless-link-cannot-carry-a-stream').detect(f);
+  assert.ok(hit, 'a link this weak is why a stream stutters');
+  assert.match(hit.evidence, /-74 dBm/);
+  assert.match(hit.evidence, /one spatial stream/);
+  assert.match(hit.evidence, /USB adapter/);
+  assert.match(hit.detail, /enp12s0/);
+  assert.strictEqual(hit.fix.kind, 'plug-in-ethernet');
+  assert.strictEqual(diagnose(f).streamable, false);
+});
+
+test('a strong wireless link with nothing else wrong stays quiet', () => {
+  // Good signal, two streams, built-in card. Wireless is not itself a fault.
+  const f = healthy();
+  f.network = {
+    routeVia: 'wlan0',
+    active: { name: 'wlan0', wireless: true, carrier: true, usb: false },
+    link: {
+      readable: true, connected: true, ssid: 'x', signalDbm: -45,
+      txBitrateMbit: 866, rxBitrateMbit: 866, spatialStreams: 2, freqMhz: 5180, band: '5GHz'
+    },
+    streamsOverWireless: true, idleWiredPorts: [], liveWiredPorts: [], interfaces: []
+  };
+  assert.strictEqual(byId('wireless-link-cannot-carry-a-stream').detect(f), null);
+});
+
+test('without a spare port the advice is the bitrate, not a cable', () => {
+  const f = healthy();
+  f.network = {
+    routeVia: 'wlan0',
+    active: { name: 'wlan0', wireless: true, carrier: true, usb: false },
+    link: {
+      readable: true, connected: true, ssid: 'x', signalDbm: -75,
+      txBitrateMbit: 90, rxBitrateMbit: 90, spatialStreams: 2, freqMhz: 2412, band: '2.4GHz'
+    },
+    streamsOverWireless: true, idleWiredPorts: [], liveWiredPorts: [], interfaces: []
+  };
+  const hit = byId('wireless-link-cannot-carry-a-stream').detect(f);
+  assert.ok(hit);
+  assert.strictEqual(hit.fix.kind, 'lower-client-bitrate');
+  // It may mention a cable as the thing it does not have; it must not send
+  // somebody looking for a port that is not there.
+  assert.doesNotMatch(hit.detail, /\benp|\beth\d/);
+  assert.match(hit.detail, /bitrate/);
+});
+
+test('an unreadable wireless link is unknown, not a blocker', () => {
+  const f = healthy();
+  f.network = {
+    routeVia: 'wlan0',
+    active: { name: 'wlan0', wireless: true, carrier: true, usb: false },
+    link: { readable: false },
+    streamsOverWireless: true, idleWiredPorts: [], liveWiredPorts: [], interfaces: []
+  };
+  const hit = byId('wireless-link-cannot-carry-a-stream').detect(f);
+  assert.ok(hit);
+  assert.strictEqual(hit.unknown, true);
+  assert.ok(!diagnose(f).blockers.map((b) => b.id).includes('wireless-link-cannot-carry-a-stream'));
+});
+
+test('a nice ceiling of zero is reported, a real one is not', () => {
+  const f = healthy();
+  f.sunshine.maxNicePriority = 0;
+  const hit = byId('sunshine-cannot-raise-its-priority').detect(f);
+  assert.ok(hit);
+  assert.match(hit.evidence, /nice 0/);
+
+  f.sunshine.maxNicePriority = 40;
+  assert.strictEqual(byId('sunshine-cannot-raise-its-priority').detect(f), null);
+
+  // Not knowing is not a fault.
+  f.sunshine.maxNicePriority = null;
+  assert.strictEqual(byId('sunshine-cannot-raise-its-priority').detect(f), null);
 });
 
 test('fixes are ordered by dependency: the capability precedes the capture switch', () => {

@@ -85,6 +85,9 @@ function describeFix(fix) {
     case 'wire-resize': return 'clarity-stream apps --apply';
     case 'unpin-output': return 'remove output_name; with one display it is only a liability';
     case 'reboot-to-clear-connectors': return 'reboot: the kernel is holding a mode on a port with nothing on it';
+    case 'plug-in-ethernet': return `plug a cable into ${fix.ports.join(' or ')}`;
+    case 'lower-client-bitrate': return 'lower the bitrate on the client until it holds';
+    case 'raise-nice-limit': return 'allow Sunshine to run at a negative nice value';
     case 'modprobe-conf': return `write "${fix.line}" to ${fix.path}`;
     case 'target-real-monitor': return 'aim capture at a monitor that is actually being driven';
     default: return fix.kind;

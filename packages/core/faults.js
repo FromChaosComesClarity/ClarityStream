@@ -127,6 +127,81 @@ const FAULTS = [
   },
 
   {
+    id: 'wireless-link-cannot-carry-a-stream',
+    title: 'The network this host streams over cannot carry a stream',
+    severity: SEVERITY.BLOCKER,
+    // Measured on the development machine, which streamed unusably while
+    // every capture-side check passed: a USB wireless dongle at -74 dBm,
+    // negotiating one spatial stream, with an ethernet port unplugged beside
+    // it. Freezes and dropped frames, and nothing in the encoder to blame.
+    //
+    // A game stream is the worst case for wireless. High bitrate,
+    // latency-sensitive, and unable to buffer its way out of trouble, because
+    // not buffering is the entire point.
+    detect: (f) => {
+      const net = f.network;
+      if (!net || !net.streamsOverWireless) return null;
+      const link = net.link;
+      if (!link?.readable) return {
+        title: 'Could not check the wireless link this host streams over',
+        evidence: `Traffic leaves by ${net.routeVia}, which is wireless, but iw could not read it.`,
+        unknown: true,
+        fix: { kind: 'none' }
+      };
+      if (link.connected === false) return null;          // not our problem to report
+
+      const reasons = [];
+      // Below about -67 dBm a 5GHz link stops holding a high modulation and
+      // starts renegotiating, which is felt as a freeze rather than as
+      // slowness.
+      if (link.signalDbm !== null && link.signalDbm <= -67) {
+        reasons.push(`signal ${link.signalDbm} dBm`);
+      }
+      // One spatial stream halves the ceiling, and a dongle that only ever
+      // negotiates one is not going to improve.
+      if (link.spatialStreams === 1) reasons.push('one spatial stream');
+      if (net.active?.usb) reasons.push('a USB adapter, which adds its own jitter');
+      if (link.band === '2.4GHz') reasons.push('2.4GHz, which is shared with everything else');
+      if (!reasons.length) return null;
+
+      const wired = net.idleWiredPorts;
+      return {
+        evidence: `Streaming over ${net.routeVia} on ${link.ssid ?? 'a wireless network'}: ` +
+                  `${reasons.join(', ')}. Negotiated ${link.txBitrateMbit ?? '?'} Mbit/s up, ` +
+                  `${link.rxBitrateMbit ?? '?'} Mbit/s down, and that figure moves.`,
+        detail: wired.length
+          ? `There is a wired port with nothing in it: ${wired.join(', ')}. A cable fixes this ` +
+            'outright and no setting will. Everything else here is working.'
+          : 'Lowering the bitrate on the client trades picture for stability, which is the ' +
+            'only lever left without a cable.',
+        fix: wired.length ? { kind: 'plug-in-ethernet', ports: wired } : { kind: 'lower-client-bitrate' }
+      };
+    }
+  },
+
+  {
+    id: 'sunshine-cannot-raise-its-priority',
+    title: 'Sunshine cannot raise its own scheduling priority',
+    severity: SEVERITY.DEGRADED,
+    // Sunshine asks for nice -10 and -15 for its capture and encode threads.
+    // Denied, they compete with everything else on the box, which is felt as
+    // jitter rather than as a lower frame rate.
+    detect: (f) => {
+      if (!f.sunshine.installed) return null;
+      const nice = f.sunshine.maxNicePriority;
+      if (nice === null || nice === undefined) return null;
+      if (nice > 0) return null;
+      return {
+        evidence: `The Sunshine process may not go below nice 0 (RLIMIT_NICE ceiling ${nice}).`,
+        detail: 'Its capture and encode threads ask for -10 and -15 and are refused, so they ' +
+                'queue behind ordinary work. It shows up as uneven frame pacing rather than ' +
+                'as a slower stream.',
+        fix: { kind: 'raise-nice-limit' }
+      };
+    }
+  },
+
+  {
     id: 'capture-bound-to-undriven-connector',
     title: 'Sunshine bound its capture to a port with nothing on it',
     severity: SEVERITY.BLOCKER,

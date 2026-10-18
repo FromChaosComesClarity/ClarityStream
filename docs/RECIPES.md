@@ -29,12 +29,14 @@ The two rules are Clarity's two rules:
 | `headless-output-cannot-be-captured` | blocker | `output_name` points at a `HEADLESS-*` output, which has no CRTC for KMS to read. |
 | `nvidia-modeset-disabled` | blocker | No DRM modesetting, so there is no scanout buffer at all. |
 | `service-not-running-as-user` | blocker | Sunshine not active as a user unit. A system unit has no seat and no Wayland socket. |
+| `wireless-link-cannot-carry-a-stream` | blocker | The host reaches the network over wireless, and the link is too weak, too narrow or too jittery to carry a game stream: a signal at or below -67 dBm, a single spatial stream, a USB adapter, or 2.4GHz. Names an unplugged ethernet port when there is one, because a cable fixes it outright and no setting does. |
 | `capture-bound-to-undriven-connector` | blocker | Sunshine's own log names a DRM connector the compositor is not driving. Usually a port the kernel left enabled after a monitor was unplugged: Sunshine resolves its target at service start and keeps choosing it, and a restart does not clear it. |
 | `output-pin-is-stale` | blocker | `output_name` names an index that is not a driven display. The index is positional, so unplugging a monitor renumbers everything below it and the pin silently comes to mean a different screen, or none. |
 | `output-pinned-with-one-display` | degraded | `output_name` is set on a machine with one display, where it cannot help and can only break later when a monitor is added or removed. |
 | `output-not-pinned` | degraded | Two or more displays and Sunshine is streaming one you did not choose. `output_name` is an index for KMS capture, not a connector name, so the obvious value does nothing. |
 | `encoder-not-pinned-nvenc` | degraded | NVENC present but `encoder` unset, so encoding may land on the CPU. |
 | `nvenc-without-cuda` | degraded | The Sunshine build links no CUDA, so frames go GPU to RAM to GPU instead of staying in VRAM. No setting fixes it. |
+| `sunshine-cannot-raise-its-priority` | degraded | Sunshine asks for nice -10 and -15 for capture and encode and is refused, so those threads queue behind ordinary work. Felt as uneven frame pacing rather than a lower frame rate. |
 | `moonlight-missing` | info | Only matters if this machine is also a client. |
 
 ## Order is part of the fix
