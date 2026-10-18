@@ -172,12 +172,17 @@ const FAULTS = [
       // 60 Mbit/s negotiated is about the floor, and below that no bitrate
       // setting rescues it.
       const FLOOR = 60;
-      // Beyond about 15% of the mean, the dips are deep enough and frequent
-      // enough to be seen rather than measured.
-      const unstable = tx.stddev !== null && tx.mean > 0 && (tx.stddev / tx.mean) > 0.15;
+      // What decides it is the floor, not the spread: a stream has to survive
+      // the link's worst moment, and its best moment buys nothing.
+      //
+      // A relative-spread rule lived here briefly and was too crude. A 2x2
+      // adapter measured 273.8 mean ranging 162 to 300, a 13.2% spread that
+      // very nearly tripped it, while every one of its samples was above
+      // twice what a stream needs. Its worst sample beat the previous
+      // adapter's best. Spread is worth reporting and is not worth judging.
       const tooThin = tx.mean < FLOOR;
       const dipsBelowFloor = tx.min !== null && tx.min < FLOOR;
-      if (!tooThin && !unstable && !dipsBelowFloor) return null;
+      if (!tooThin && !dipsBelowFloor) return null;
 
       // Attributes explain the measurement; they never trigger it.
       const why = [];

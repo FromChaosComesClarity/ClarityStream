@@ -736,3 +736,54 @@ Every one is the same shape: a property that correlates with the fault,
 standing in for the fault itself. The correlation holds until it does not, and
 then the tool states something false with full confidence, which is worse than
 saying nothing.
+
+# Part nine: the dongle swap, and the rule it corrected
+
+The owner had a second adapter, a TP-Link against the generic one in use, and
+asked whether it was worth testing. I said probably not, because the existing
+radio was already at its ceiling: 150 Mbit/s is exactly the maximum for a 1x1
+HT40 link, so a better antenna cannot raise a ceiling already being touched.
+
+I added one caveat, that a 2x2 adapter would double it. The caveat was the
+case. **The prediction was wrong and the reservation attached to it was right**,
+which is not the same as being right.
+
+## Three radios, one room, one method
+
+```
+                       mean      range        sd     rel     signal   ping avg/mdev/max
+ old 1x1  @ 5GHz        76.8     27 - 117    26.9   35.0%    -75.0    1.54 / 1.87 / 15.7
+ old 1x1  @ 2.4GHz     142.4    121 - 150    10.1    7.1%    -59.2    1.78 / 2.22 / 17.4
+ TP-Link 2x2 @ 2.4GHz  273.8    162 - 300    36.1   13.2%    -55.3    1.49 / 1.46 /  9.9
+```
+
+The TP-Link is a TL-WN823N, RTL8192EU, on the `rtl8xxxu` driver. 802.11n and
+2.4GHz only, with no VHT at all, and it beats a dual-band 802.11ac adapter
+outright because it has two spatial streams and the other has one:
+`HT TX/RX MCS rate indexes supported: 0-15` against `0-7`.
+
+**Its worst sample, 162, is above the old adapter's best, 150.** It also has
+the lowest jitter and the lowest worst-case latency of the three, 1.46 and 9.9
+against 2.22 and 17.4.
+
+Both adapters are USB 2.0 devices, so the port makes no difference to either.
+This machine has three USB 2.0 root hubs and three at 10 Gbit/s, and a USB 2.0
+device negotiates 480 Mbit/s in any of them. At 300 Mbit/s of PHY rate, around
+150 Mbit/s real, USB 2.0 is still not the constraint.
+
+## What it corrected
+
+The fault had two rules: a floor of about 60 Mbit/s, and a spread wider than
+15% of the mean. The TP-Link measured 13.2%. It came within a rounding of
+being called a blocker while delivering more than twice what a stream needs,
+at every single sample.
+
+The spread rule is gone. What decides it is the floor, because a stream has to
+survive the link's worst moment and its best moment buys nothing. The spread
+is still measured and still reported in the evidence; it is simply not a
+verdict.
+
+That rule had lasted one commit. It was introduced in part eight as the fix
+for judging a link by its attributes, and it was itself a proxy: variance
+correlates with a link that cannot hold up, right up until the variance is
+happening somewhere that does not matter.

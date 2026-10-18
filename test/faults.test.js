@@ -259,6 +259,15 @@ const BANDS = {
     signalDbm: -59, readable: true, connected: true,
     txStats: { mean: 142.4, min: 121.5, max: 150.0, stddev: 10.1 },
     signalStats: { mean: -59, min: -62, max: -56, stddev: 1.6 }
+  },
+  // A 2x2 adapter on the same band. Nearly tripped a relative-spread rule at
+  // 13.2%, while its worst sample beat the 1x1 adapter's best. It is the
+  // reason this fault judges the floor and not the spread.
+  twoByTwo24GHz: {
+    ssid: 'Jose', band: '2.4GHz', freqMhz: 2412, spatialStreams: 2, samples: 25,
+    signalDbm: -55, readable: true, connected: true,
+    txStats: { mean: 273.8, min: 162.0, max: 300.0, stddev: 36.1 },
+    signalStats: { mean: -55, min: -62, max: -52, stddev: 2.7 }
   }
 };
 
@@ -306,6 +315,24 @@ test('a fast link that collapses is still a blocker', () => {
   const hit = byId('wireless-link-cannot-carry-a-stream').detect(f);
   assert.ok(hit, 'a link that dips to 12 Mbit/s cannot hold a stream');
   assert.match(hit.evidence, /moved between 12 and 300/);
+});
+
+test('a wide spread well above the floor is not a fault', () => {
+  // Measured: a 2x2 adapter ranging 162 to 300. The spread is 13.2% of the
+  // mean and a relative-spread rule nearly fired on it, but every sample is
+  // more than twice what a stream needs, and its worst beat the previous
+  // adapter's best. Spread is reported; it is not judged.
+  const f = onWireless(BANDS.twoByTwo24GHz, { idleWired: ['enp12s0'] });
+  assert.strictEqual(byId('wireless-link-cannot-carry-a-stream').detect(f), null);
+  assert.strictEqual(diagnose(f).streamable, true);
+});
+
+test('the three measured adapters rank the way the readings do', () => {
+  // One room, one method, three radios. Only the first cannot carry a stream.
+  const fault = byId('wireless-link-cannot-carry-a-stream');
+  assert.ok(fault.detect(onWireless(BANDS.bad5GHz)), '5GHz 1x1, dips to 27');
+  assert.strictEqual(fault.detect(onWireless(BANDS.good24GHz)), null, '2.4GHz 1x1, floor 121');
+  assert.strictEqual(fault.detect(onWireless(BANDS.twoByTwo24GHz)), null, '2.4GHz 2x2, floor 162');
 });
 
 test('attributes are reported as contributing, never as the reason', () => {
