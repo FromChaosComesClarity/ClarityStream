@@ -197,6 +197,7 @@ function readSunshineLog(logPath) {
   const sunshineStarted = run.some((l) => /Sunshine version:/.test(l));
   const cudaWarningAtLastStart = run.some((l) => /without CUDA support/i.test(l));
 
+
   // An empty list means Sunshine could not enumerate displays through KMS at
   // all, which is why output_name then resolves to nothing.
   const start = run.findIndex((l) => l.includes('Start of KMS monitor list'));
@@ -278,6 +279,23 @@ function probeSunshine() {
     }
   } catch { /* leave null: not knowing is not a fault */ }
 
+  // Whether Sunshine is holding a session open. Not the same as a client
+  // being attached: a client can disconnect and leave the session held, which
+  // is what "closing the window does not end this" means, and during that the
+  // streamed display is still legitimately resized.
+  //
+  // The log cannot answer it. It records every session start and no session
+  // end, so counting events gets it wrong in one direction forever. /serverinfo
+  // is plain HTTP on 47989 with no authentication, so asking is cheap and this
+  // is the only authority there is.
+  let sessionBusy = null;
+  const info = tryExec('curl', ['-s', '--max-time', '3',
+    'http://localhost:47989/serverinfo?uniqueid=0123456789ABCDEF']);
+  if (info.ok && /<currentgame>/.test(info.stdout)) {
+    const game = (/<currentgame>([^<]*)<\/currentgame>/.exec(info.stdout) || [])[1] ?? '';
+    sessionBusy = game.trim() !== '' && game.trim() !== '0';
+  }
+
   const unitName = discoverSunshineUnit();
   const unit = unitName ? tryExec('systemctl', ['--user', 'is-enabled', unitName]) : { ok: false, stdout: '' };
   const active = unitName ? tryExec('systemctl', ['--user', 'is-active', unitName]) : { ok: false, stdout: '' };
@@ -297,6 +315,7 @@ function probeSunshine() {
     unitName,
     unitFound: Boolean(unitName),
     maxNicePriority,
+    sessionBusy,
     cudaCapable,
     unitEnabled: unit.ok ? unit.stdout.trim() : (unit.stdout || '').trim() || 'unknown',
     unitActive: active.ok ? active.stdout.trim() : (active.stdout || '').trim() || 'unknown'

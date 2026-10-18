@@ -40,6 +40,7 @@ function healthy() {
       unitFound: true, unitName: 'app-dev.lizardbyte.app.Sunshine.service',
       unitEnabled: 'enabled', unitActive: 'active',
       cudaCapable: true, cudaWarningAtLastStart: false, sunshineStarted: true, capturedWith: 'kms',
+      sessionBusy: false,
       confRaw: 'capture = kms\nadapter_name = /dev/dri/renderD128\nencoder = nvenc\noutput_name = 2\n',
       logReadable: true, boundConnectorId: 830, kmsListEmpty: false,
       maxNicePriority: 40
@@ -470,6 +471,40 @@ test('a firewall whose rules cannot be read is unknown, not a blocker', () => {
   assert.strictEqual(hit.unknown, true);
   assert.match(hit.title, /could not tell/i);
   assert.strictEqual(diagnose(f).streamable, null);
+});
+
+test('a resize is not stranded while the session is still held', () => {
+  // Caught live. The saved-state file exists for the whole of a session,
+  // because it is what `stop` restores from, so its presence is exactly what
+  // a HEALTHY stream looks like. The doctor called a correct resize a fault
+  // while the owner was streaming through it.
+  const f = healthy();
+  f.strandedResize = { connector: 'DP-2', width: 3440, height: 1440, refresh: 165 };
+  f.sunshine.sessionBusy = true;
+  assert.strictEqual(byId('display-left-resized').detect(f), null);
+});
+
+test('a client disconnecting does not by itself end the session', () => {
+  // The second attempt at this read CLIENT CONNECTED / DISCONNECTED from the
+  // log and was also wrong: a client can detach while Sunshine holds the
+  // session open, and the display is correctly resized throughout. Only the
+  // session being held decides it.
+  const f = healthy();
+  f.strandedResize = { connector: 'DP-2', width: 3440, height: 1440, refresh: 165 };
+  f.sunshine.sessionBusy = true;
+  f.sunshine.capturedWith = 'kms';
+  assert.strictEqual(byId('display-left-resized').detect(f), null,
+    'a held session means the resize is in effect, whatever the client is doing');
+});
+
+test('an unaskable session is reported without asserting one ended', () => {
+  const f = healthy();
+  f.strandedResize = { connector: 'DP-2', width: 3440, height: 1440, refresh: 165 };
+  f.sunshine.sessionBusy = null;
+  const hit = byId('display-left-resized').detect(f);
+  assert.ok(hit, 'a stranded display is still worth saying');
+  assert.match(hit.detail, /could not be confirmed/i);
+  assert.doesNotMatch(hit.detail, /A session ended/);
 });
 
 test('a desktop left at a streaming resolution is reported', () => {

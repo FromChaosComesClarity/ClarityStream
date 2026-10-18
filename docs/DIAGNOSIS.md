@@ -787,3 +787,67 @@ That rule had lasted one commit. It was introduced in part eight as the fix
 for judging a link by its attributes, and it was itself a proxy: variance
 correlates with a link that cannot hold up, right up until the variance is
 happening somewhere that does not matter.
+
+# Part ten: caught in the act, twice in one fix
+
+The owner sent a screenshot of the host window during a working stream. It
+reported `display-left-resized`: "DP-2 was 3440x1440@165 before a stream
+started, and was never put back. A session ended without restoring it."
+
+He was streaming through that display at the time. The resize was correct and
+the session had not ended.
+
+## The proxy
+
+`strandedResize` reads the saved-state file that `stream-display start` writes
+and `stop` deletes. The fault treated the file's existence as evidence a
+session had ended without restoring.
+
+It is not. The file exists for the **whole** of a session, because it is what
+`stop` restores from. Its presence is equally the signature of a healthy live
+stream. The fault could not tell the two apart and picked one.
+
+## The second proxy, in the fix for the first
+
+The first fix read `CLIENT CONNECTED` and `CLIENT DISCONNECTED` from the log,
+last one wins. It reported no live session, and the API disagreed:
+
+```
+[20:48:01]: Info: CLIENT CONNECTED
+[20:56:17]: Info: CLIENT DISCONNECTED
+
+/serverinfo -> <currentgame>881448767</currentgame>
+               <state>SUNSHINE_SERVER_BUSY</state>
+```
+
+A client can disconnect while Sunshine holds the session open. That is the
+behaviour behind "closing the window on the client does not end this", which
+this project added a Stop button for. Throughout it, the display is correctly
+resized.
+
+The log cannot answer the question at all. It records
+`New streaming session started [active sessions: 1]` and never records one
+ending, so counting events is wrong in one direction permanently.
+
+`/serverinfo` on port 47989 is plain HTTP with no authentication, so the probe
+asks Sunshine. When it cannot ask, the finding still appears but stops
+asserting that a session ended, because it does not know that.
+
+## Two proxies in one sitting
+
+The fix for a proxy was itself a proxy, written minutes later, by someone who
+had spent the whole day removing them. The failure is not ignorance of the
+pattern. It is that a correlation is always the thing within reach, and the
+authority usually needs another call.
+
+Running tally, every one found by hardware changing or by another machine:
+
+| | read | should have read |
+| --- | --- | --- |
+| part five | an index | what Sunshine bound |
+| part seven | `ldd` | whether CUDA is compiled in |
+| part seven | a missing connector id | which capture backend ran |
+| part eight | a link's hardware | what the link delivers |
+| part nine | a link's variance | the link's floor |
+| part ten | a state file's existence | whether a session is held |
+| part ten | client connect events | whether a session is held |

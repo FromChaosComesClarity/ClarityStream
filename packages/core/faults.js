@@ -543,9 +543,23 @@ const FAULTS = [
     detect: (f) => {
       const s = f.strandedResize;
       if (!s) return null;
+      // The saved state exists for the whole of a session, because it is what
+      // `stop` restores from. Reading its presence as "a session ended" is
+      // reading a proxy: it is also exactly what a HEALTHY live stream looks
+      // like. Caught while a stream was running and the doctor called the
+      // correct resize a fault.
+      //
+      // The first attempt at this read CLIENT CONNECTED / DISCONNECTED from
+      // the log, and was also wrong: a client can disconnect while the session
+      // stays held, and the display is correctly resized throughout that.
+      if (f.sunshine.sessionBusy === true) return null;
+      const certain = f.sunshine.sessionBusy === false;
       return {
         evidence: `${s.connector} was ${s.was} before a stream started, and was never put back.`,
-        detail: 'A session ended without restoring it. Nothing is broken; the screen is simply ' +
+        detail: (certain
+          ? 'A session ended without restoring it. '
+          : 'No session appears to be running, though that could not be confirmed. ') +
+          'Nothing is broken; the screen is simply ' +
                 'still at the size the client asked for.',
         fix: { kind: 'restore-display', connector: s.connector, was: s.was }
       };

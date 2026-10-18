@@ -1,6 +1,6 @@
 {
   "name": "clarity-stream",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "Clarity Stream, game streaming from a Linux box that actually works, including on NVIDIA",
   "main": "apps/host/main.js",
   "type": "commonjs",
