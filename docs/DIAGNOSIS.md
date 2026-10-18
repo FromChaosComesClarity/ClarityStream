@@ -671,3 +671,68 @@ It was a bug in 2026.516, fixed upstream. Not NVIDIA, not this machine, and
 nothing the laptop needed to test. `output_name` can now be resolved against
 Sunshine's own answer rather than only derived from `connector_id` order,
 which is worth doing and is not done yet.
+
+# Part eight: the network detector was wrong within a day
+
+The fault added in part six judged a wireless link by its attributes: a signal
+at or below -67 dBm, one spatial stream, a USB adapter, or 2.4GHz. Any one
+tripped it.
+
+The owner moved the same radio to the 2.4GHz network on the same router, and
+the detector called a link measuring **150 Mbit/s at -62 dBm with a standard
+deviation of zero** a blocker, because it was USB and because it was 2.4GHz.
+Both were true. Neither mattered.
+
+## What the two bands actually measure
+
+One radio, one room, minutes apart, 25 samples each plus 100 pings:
+
+```
+            mean rate   range        sd     signal   ping avg / mdev
+  2.4GHz    142.4       121.5-150.0  10.1   -59      1.78 / 2.22 ms
+  5GHz       76.8        27.0-117.0  26.9   -75      1.54 / 1.87 ms
+```
+
+2.4GHz delivers 1.9x the rate at a fifth of the relative spread. The band with
+the worse reputation won, because the 5GHz link had no margin: MCS 2-3 against
+a ceiling of 9, while 2.4GHz sat at MCS 7 of 7.
+
+The latency columns are the interesting ones. **At idle, 5GHz is slightly
+better on both average and jitter.** Anybody measuring with a ping would have
+chosen the band that stutters. The difference only appears under the load of
+an actual stream, which is where the collapsing rate starts to matter, and it
+is why the rate spread rather than the latency is what this fault reads.
+
+## What the detector reads now
+
+The mean negotiated rate, its minimum, and its spread, over five samples taken
+in the probe rather than one read. A single read of a wireless link reports
+the rate of the last frame, which on a marginal link is whatever it happened
+to be.
+
+- below about 60 Mbit/s mean, or dipping below it, or a spread wider than 15%
+  of the mean, it is a blocker
+- above that it is silent, whatever the band, the adapter or the stream count
+
+USB, 2.4GHz, single-stream and a weak signal are still reported. They appear
+after the measurement, as contributing causes, and a test asserts that order
+so they cannot drift back into being the reason.
+
+## A smaller bug found in the same pass
+
+The stream count was parsed from `NSS`, which appears only in VHT output. On
+an HT link, which is what 2.4GHz negotiates, it returned null. The count is
+implied by the MCS index there: 0-7 is one stream, 8-15 two. So the detector
+was blind to stream count on exactly the band the machine had moved to.
+
+## The pattern, now four for four
+
+Part five: a pin inferred from an index rather than from what Sunshine bound.
+Part seven: CUDA inferred from `ldd`, which cannot see a dlopen. Part seven
+again: a missing connector id read as "never started". And now a link judged
+by what kind of hardware it runs on rather than by what it carries.
+
+Every one is the same shape: a property that correlates with the fault,
+standing in for the fault itself. The correlation holds until it does not, and
+then the tool states something false with full confidence, which is worse than
+saying nothing.

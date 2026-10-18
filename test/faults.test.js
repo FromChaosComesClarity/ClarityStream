@@ -244,79 +244,88 @@ test('a wired host says nothing about the network', () => {
   assert.strictEqual(byId('wireless-link-cannot-carry-a-stream').detect(healthy()), null);
 });
 
-test('a weak wireless link with a spare ethernet port is a blocker', () => {
-  // Measured on the development machine, which streamed unusably while every
-  // capture-side check passed.
+// Both of these are real readings, taken minutes apart from the same radio in
+// the same room, by switching bands. They are the reason this fault stopped
+// judging links by their attributes and started judging them by delivery.
+const BANDS = {
+  bad5GHz: {
+    ssid: 'Jose_5G', band: '5GHz', freqMhz: 5180, spatialStreams: 1, samples: 25,
+    signalDbm: -75, readable: true, connected: true,
+    txStats: { mean: 76.8, min: 27.0, max: 117.0, stddev: 26.9 },
+    signalStats: { mean: -75, min: -80, max: -72, stddev: 2.1 }
+  },
+  good24GHz: {
+    ssid: 'Jose', band: '2.4GHz', freqMhz: 2412, spatialStreams: 1, samples: 25,
+    signalDbm: -59, readable: true, connected: true,
+    txStats: { mean: 142.4, min: 121.5, max: 150.0, stddev: 10.1 },
+    signalStats: { mean: -59, min: -62, max: -56, stddev: 1.6 }
+  }
+};
+
+function onWireless(link, { idleWired = [] } = {}) {
   const f = healthy();
   f.network = {
-    routeVia: 'wlp16s0f4u2i2',
-    active: { name: 'wlp16s0f4u2i2', wireless: true, carrier: true, usb: true },
-    link: {
-      readable: true, connected: true, ssid: 'Jose_5G', signalDbm: -74,
-      txBitrateMbit: 87.8, rxBitrateMbit: 12, spatialStreams: 1, freqMhz: 5180, band: '5GHz'
-    },
+    routeVia: 'wlp0',
+    active: { name: 'wlp0', wireless: true, carrier: true, usb: true },
+    link,
     streamsOverWireless: true,
-    idleWiredPorts: ['enp12s0'],
+    idleWiredPorts: idleWired,
     liveWiredPorts: [],
     interfaces: []
   };
+  return f;
+}
+
+test('the measured 5GHz link that stuttered is a blocker', () => {
+  const f = onWireless(BANDS.bad5GHz, { idleWired: ['enp12s0'] });
   const hit = byId('wireless-link-cannot-carry-a-stream').detect(f);
-  assert.ok(hit, 'a link this weak is why a stream stutters');
-  assert.match(hit.evidence, /-74 dBm/);
-  assert.match(hit.evidence, /one spatial stream/);
-  assert.match(hit.evidence, /USB adapter/);
+  assert.ok(hit, '76.8 Mbit/s mean dipping to 27 cannot carry a stream');
+  assert.match(hit.evidence, /76\.8 Mbit\/s/);
+  assert.match(hit.evidence, /moved between 27 and 117/);
   assert.match(hit.detail, /enp12s0/);
   assert.strictEqual(hit.fix.kind, 'plug-in-ethernet');
   assert.strictEqual(diagnose(f).streamable, false);
 });
 
-test('a strong wireless link with nothing else wrong stays quiet', () => {
-  // Good signal, two streams, built-in card. Wireless is not itself a fault.
-  const f = healthy();
-  f.network = {
-    routeVia: 'wlan0',
-    active: { name: 'wlan0', wireless: true, carrier: true, usb: false },
-    link: {
-      readable: true, connected: true, ssid: 'x', signalDbm: -45,
-      txBitrateMbit: 866, rxBitrateMbit: 866, spatialStreams: 2, freqMhz: 5180, band: '5GHz'
-    },
-    streamsOverWireless: true, idleWiredPorts: [], liveWiredPorts: [], interfaces: []
-  };
+test('the measured 2.4GHz link on the same radio is NOT a blocker', () => {
+  // USB, 2.4GHz and one spatial stream, all true, and none of them matters:
+  // it delivers 142 Mbit/s with a tenth of the spread. The first version of
+  // this fault called it a blocker for having those attributes.
+  const f = onWireless(BANDS.good24GHz, { idleWired: ['enp12s0'] });
   assert.strictEqual(byId('wireless-link-cannot-carry-a-stream').detect(f), null);
+  assert.strictEqual(diagnose(f).streamable, true);
 });
 
-test('without a spare port the advice is the bitrate, not a cable', () => {
-  const f = healthy();
-  f.network = {
-    routeVia: 'wlan0',
-    active: { name: 'wlan0', wireless: true, carrier: true, usb: false },
-    link: {
-      readable: true, connected: true, ssid: 'x', signalDbm: -75,
-      txBitrateMbit: 90, rxBitrateMbit: 90, spatialStreams: 2, freqMhz: 2412, band: '2.4GHz'
-    },
-    streamsOverWireless: true, idleWiredPorts: [], liveWiredPorts: [], interfaces: []
-  };
+test('a fast link that collapses is still a blocker', () => {
+  // High average, deep dips. The mean alone would pass this and a stream
+  // would freeze every time it hit the floor.
+  const f = onWireless({
+    ...BANDS.good24GHz,
+    txStats: { mean: 140, min: 12, max: 300, stddev: 61 }
+  });
   const hit = byId('wireless-link-cannot-carry-a-stream').detect(f);
-  assert.ok(hit);
-  assert.strictEqual(hit.fix.kind, 'lower-client-bitrate');
-  // It may mention a cable as the thing it does not have; it must not send
-  // somebody looking for a port that is not there.
-  assert.doesNotMatch(hit.detail, /\benp|\beth\d/);
-  assert.match(hit.detail, /bitrate/);
+  assert.ok(hit, 'a link that dips to 12 Mbit/s cannot hold a stream');
+  assert.match(hit.evidence, /moved between 12 and 300/);
 });
 
-test('an unreadable wireless link is unknown, not a blocker', () => {
-  const f = healthy();
-  f.network = {
-    routeVia: 'wlan0',
-    active: { name: 'wlan0', wireless: true, carrier: true, usb: false },
-    link: { readable: false },
-    streamsOverWireless: true, idleWiredPorts: [], liveWiredPorts: [], interfaces: []
-  };
+test('attributes are reported as contributing, never as the reason', () => {
+  const f = onWireless(BANDS.bad5GHz);
   const hit = byId('wireless-link-cannot-carry-a-stream').detect(f);
-  assert.ok(hit);
-  assert.strictEqual(hit.unknown, true);
-  assert.ok(!diagnose(f).blockers.map((b) => b.id).includes('wireless-link-cannot-carry-a-stream'));
+  // The measurement leads; USB and the rest explain it afterwards.
+  assert.ok(hit.evidence.indexOf('76.8') < hit.evidence.indexOf('Contributing'),
+    'the measured rate must come before the attributes that explain it');
+  assert.match(hit.evidence, /Contributing:.*USB adapter/);
+});
+
+test('an unreadable or rateless wireless link is unknown, not a blocker', () => {
+  const noRead = onWireless({ readable: false });
+  const a = byId('wireless-link-cannot-carry-a-stream').detect(noRead);
+  assert.strictEqual(a.unknown, true);
+
+  const noRate = onWireless({ readable: true, connected: true, ssid: 'x', txStats: { mean: null } });
+  const b = byId('wireless-link-cannot-carry-a-stream').detect(noRate);
+  assert.strictEqual(b.unknown, true);
+  assert.ok(!diagnose(noRate).blockers.map((x) => x.id).includes('wireless-link-cannot-carry-a-stream'));
 });
 
 test('a nice ceiling of zero is reported, a real one is not', () => {

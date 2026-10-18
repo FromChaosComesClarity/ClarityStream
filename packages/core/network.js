@@ -54,28 +54,83 @@ function routeInterface() {
   return m ? m[1] : null;
 }
 
-// Signal and negotiated rate for a wireless interface. Everything here is
-// reported as measured or null; nothing is estimated.
-function wirelessLink(name) {
-  const r = tryExec('iw', ['dev', name, 'link']);
-  if (!r.ok) return { readable: false };
-  if (/Not connected/i.test(r.stdout)) return { readable: true, connected: false };
+// Signal and negotiated rate for a wireless interface.
+//
+// Sampled, not read once. The rate a wireless link reports is the rate of the
+// last frame, and on a marginal link it moves between reads while a healthy
+// one holds. Measured on two bands of the same radio, same room, same minute:
+//
+//   2.4GHz  142.4 Mbit/s mean, stddev 10.1, signal -59   stable
+//   5GHz     76.8 Mbit/s mean, stddev 26.9, signal -75   collapsing to 27
+//
+// A single read would have called either of those anything. The spread is the
+// measurement that matters, because a stream cannot buffer through a dip.
+function wirelessLink(name, { samples = 5, gapMs = 150 } = {}) {
+  const reads = [];
+  let ssid = null, band = null, freqMhz = null, streams = null, connected = null;
 
-  const num = (re) => { const m = r.stdout.match(re); return m ? Number(m[1]) : null; };
-  const str = (re) => { const m = r.stdout.match(re); return m ? m[1].trim() : null; };
+  for (let i = 0; i < samples; i += 1) {
+    const r = tryExec('iw', ['dev', name, 'link']);
+    if (!r.ok) return { readable: false };
+    if (/Not connected/i.test(r.stdout)) return { readable: true, connected: false };
+    connected = true;
+
+    const num = (re) => { const m = r.stdout.match(re); return m ? Number(m[1]) : null; };
+    ssid = (r.stdout.match(/SSID:\s*(.+)/) || [])[1]?.trim() ?? ssid;
+    freqMhz = num(/freq:\s*([\d.]+)/) ?? freqMhz;
+    // NSS appears only in VHT output. On an HT link the stream count is
+    // implied by the MCS index: 0-7 is one stream, 8-15 two, 16-23 three.
+    // Parsing only NSS reported null on 2.4GHz, which is the band this
+    // machine moved to.
+    const nss = num(/NSS\s+(\d+)/);
+    const htMcs = /VHT/.test(r.stdout) ? null : num(/\bMCS\s+(\d+)/);
+    streams = nss ?? (htMcs === null ? streams : Math.floor(htMcs / 8) + 1);
+    reads.push({
+      signalDbm: num(/signal:\s*(-?\d+)\s*dBm/),
+      txBitrateMbit: num(/tx bitrate:\s*([\d.]+)\s*MBit\/s/),
+      rxBitrateMbit: num(/rx bitrate:\s*([\d.]+)\s*MBit\/s/)
+    });
+
+    // Busy-wait rather than pull in async: the probe is synchronous
+    // throughout and one second of it is cheaper than making it not be.
+    if (i < samples - 1) {
+      const until = Date.now() + gapMs;
+      while (Date.now() < until) { /* spin */ }
+    }
+  }
+
+  const stats = (key) => {
+    const vals = reads.map((r) => r[key]).filter((v) => v !== null && !Number.isNaN(v));
+    if (!vals.length) return { mean: null, min: null, max: null, stddev: null };
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const variance = vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length;
+    return {
+      mean: Number(mean.toFixed(1)),
+      min: Math.min(...vals),
+      max: Math.max(...vals),
+      stddev: Number(Math.sqrt(variance).toFixed(1))
+    };
+  };
+
+  const tx = stats('txBitrateMbit');
+  const sig = stats('signalDbm');
+  if (freqMhz !== null) band = freqMhz >= 5000 ? '5GHz' : '2.4GHz';
 
   return {
     readable: true,
-    connected: true,
-    ssid: str(/SSID:\s*(.+)/),
-    signalDbm: num(/signal:\s*(-?\d+)\s*dBm/),
-    txBitrateMbit: num(/tx bitrate:\s*([\d.]+)\s*MBit\/s/),
-    rxBitrateMbit: num(/rx bitrate:\s*([\d.]+)\s*MBit\/s/),
-    // Spatial streams. One stream is half the ceiling of two, and on a cheap
-    // dongle it is usually all you get.
-    spatialStreams: num(/NSS\s+(\d+)/),
-    freqMhz: num(/freq:\s*([\d.]+)/),
-    band: (() => { const f = num(/freq:\s*([\d.]+)/); return f === null ? null : (f >= 5000 ? '5GHz' : '2.4GHz'); })()
+    connected,
+    ssid,
+    freqMhz,
+    band,
+    spatialStreams: streams,
+    samples: reads.length,
+    // Point values kept for anything that wants one number, taken as the mean
+    // rather than as whichever read happened to be last.
+    signalDbm: sig.mean === null ? null : Math.round(sig.mean),
+    txBitrateMbit: tx.mean,
+    rxBitrateMbit: stats('rxBitrateMbit').mean,
+    txStats: tx,
+    signalStats: sig
   };
 }
 

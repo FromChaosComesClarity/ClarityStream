@@ -130,14 +130,23 @@ const FAULTS = [
     id: 'wireless-link-cannot-carry-a-stream',
     title: 'The network this host streams over cannot carry a stream',
     severity: SEVERITY.BLOCKER,
-    // Measured on the development machine, which streamed unusably while
-    // every capture-side check passed: a USB wireless dongle at -74 dBm,
-    // negotiating one spatial stream, with an ethernet port unplugged beside
-    // it. Freezes and dropped frames, and nothing in the encoder to blame.
+    // Judged on what the link is measured to deliver, not on a checklist of
+    // unpromising attributes.
     //
-    // A game stream is the worst case for wireless. High bitrate,
-    // latency-sensitive, and unable to buffer its way out of trouble, because
-    // not buffering is the entire point.
+    // The first version of this tripped on "is USB", "is 2.4GHz" and "one
+    // spatial stream", and it was wrong within a day. The same radio moved to
+    // 2.4GHz and measured 150 Mbit/s at -62 dBm with a standard deviation of
+    // zero, and this still called it a blocker because it was USB and 2.4GHz.
+    // Both were true and neither mattered. That is reasoning from a proxy,
+    // which is the exact mistake this project exists to avoid.
+    //
+    // What was measured on the two bands of one radio, same room, same minute:
+    //
+    //   2.4GHz  142.4 Mbit/s mean, sd 10.1, -59 dBm   usable
+    //   5GHz     76.8 Mbit/s mean, sd 26.9, -75 dBm   collapses to 27
+    //
+    // The mean alone would not separate those well. The spread does, because
+    // a stream has no buffer to ride a dip out with.
     detect: (f) => {
       const net = f.network;
       if (!net || !net.streamsOverWireless) return null;
@@ -148,27 +157,42 @@ const FAULTS = [
         unknown: true,
         fix: { kind: 'none' }
       };
-      if (link.connected === false) return null;          // not our problem to report
+      if (link.connected === false) return null;
 
-      const reasons = [];
-      // Below about -67 dBm a 5GHz link stops holding a high modulation and
-      // starts renegotiating, which is felt as a freeze rather than as
-      // slowness.
-      if (link.signalDbm !== null && link.signalDbm <= -67) {
-        reasons.push(`signal ${link.signalDbm} dBm`);
-      }
-      // One spatial stream halves the ceiling, and a dongle that only ever
-      // negotiates one is not going to improve.
-      if (link.spatialStreams === 1) reasons.push('one spatial stream');
-      if (net.active?.usb) reasons.push('a USB adapter, which adds its own jitter');
-      if (link.band === '2.4GHz') reasons.push('2.4GHz, which is shared with everything else');
-      if (!reasons.length) return null;
+      const tx = link.txStats ?? {};
+      if (tx.mean === null || tx.mean === undefined) return {
+        title: 'Could not read the rate of the wireless link this host streams over',
+        evidence: `Connected to ${link.ssid ?? 'a wireless network'}, but no bitrate was reported.`,
+        unknown: true,
+        fix: { kind: 'none' }
+      };
 
+      // A 1080p60 stream wants roughly 20-30 Mbit/s sustained, and a wireless
+      // link delivers about half its negotiated rate as real throughput. So
+      // 60 Mbit/s negotiated is about the floor, and below that no bitrate
+      // setting rescues it.
+      const FLOOR = 60;
+      // Beyond about 15% of the mean, the dips are deep enough and frequent
+      // enough to be seen rather than measured.
+      const unstable = tx.stddev !== null && tx.mean > 0 && (tx.stddev / tx.mean) > 0.15;
+      const tooThin = tx.mean < FLOOR;
+      const dipsBelowFloor = tx.min !== null && tx.min < FLOOR;
+      if (!tooThin && !unstable && !dipsBelowFloor) return null;
+
+      // Attributes explain the measurement; they never trigger it.
+      const why = [];
+      if (link.signalDbm !== null && link.signalDbm <= -70) why.push(`signal ${link.signalDbm} dBm`);
+      if (link.spatialStreams === 1) why.push('one spatial stream');
+      if (net.active?.usb) why.push('a USB adapter');
+      if (link.band === '2.4GHz') why.push('2.4GHz, shared with everything else');
+
+      const spread = tx.stddev === null ? '' :
+        ` It moved between ${tx.min} and ${tx.max} over ${link.samples} samples (sd ${tx.stddev}).`;
       const wired = net.idleWiredPorts;
       return {
         evidence: `Streaming over ${net.routeVia} on ${link.ssid ?? 'a wireless network'}: ` +
-                  `${reasons.join(', ')}. Negotiated ${link.txBitrateMbit ?? '?'} Mbit/s up, ` +
-                  `${link.rxBitrateMbit ?? '?'} Mbit/s down, and that figure moves.`,
+                  `${tx.mean} Mbit/s negotiated on average, against roughly ${FLOOR} needed.` +
+                  spread + (why.length ? ` Contributing: ${why.join(', ')}.` : ''),
         detail: wired.length
           ? `There is a wired port with nothing in it: ${wired.join(', ')}. A cable fixes this ` +
             'outright and no setting will. Everything else here is working.'
@@ -178,7 +202,6 @@ const FAULTS = [
       };
     }
   },
-
   {
     id: 'sunshine-cannot-raise-its-priority',
     title: 'Sunshine cannot raise its own scheduling priority',
