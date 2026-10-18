@@ -440,6 +440,13 @@ DP-1 reads **disconnected but still enabled**. The kernel had not torn down
 the mode after the monitor was removed, so the connector still had a
 programmed CRTC, and an earlier debug run had shown its geometry:
 
+> **This state is not by itself evidence of anything.** The AMD laptop running
+> this project reports `card1-HDMI-A-1 disconnected enabled` for a port with
+> nothing in it and has never had a stale mode. `disconnected + enabled` is
+> simply how an idle port reads on amdgpu. What made it a fault here is that
+> Sunshine bound that connector while the compositor was driving another one,
+> and that comparison, not the sysfs state, is what the detector uses.
+
 ```
 Debug: crtc(0, 0)
 Debug: crtc(1440, 900)
@@ -582,3 +589,85 @@ cross, so the doctor reported a healthy host while the stream was unusable.
 
 A tool that proves the picture is not black, and says nothing about whether it
 can reach anybody, is answering half the question with full confidence.
+
+# Part seven: three corrections from the other machine, and one from this one
+
+2026-10-18. The AMD laptop read the 0.7.0 code and reported three things. All
+three were right. A fourth was found here while checking the first.
+
+## The test suite only passed on this machine
+
+`a healthy host reports no blockers` passed here and failed on the laptop,
+80/81. The fixture describes DP-2 and DP-3 on `card1`; `enumerateOutputs` read
+connector ids from the **real** `/sys/class/drm`, where that laptop's `card1`
+is eDP-1 and HDMI-A-1. Unknown ordering, unknown verdict, `streamable: null`.
+
+So "81 tests pass", reported here twice, was a statement about this desktop's
+hardware.
+
+The fix is not a sysfs root to inject. `enumerateOutputs` had no business
+reading the filesystem at all: this engine's shape is that `probe.js` reads
+the machine and everything else decides what the readings mean. The probe
+already collected `connectorId` per connector, and now collects
+`preferredMode` too, so the function is pure over the facts it is handed.
+
+Proved two ways: it answers correctly about a fabricated three-connector
+machine that does not exist, and the whole suite passes with `fs` patched to
+throw on any path under `/sys`.
+
+## A missing connector id meant three things, and the code knew one
+
+On the Wayland capture path Sunshine never logs `Found connector ID`.
+`capture-bound-to-undriven-connector` treated that as "Sunshine has never
+started" and returned null. The verdict was right and the reason was wrong,
+which matters in a tool whose entire claim is that it explains itself.
+
+It now separates never-started, started-on-another-backend, and
+started-on-KMS-with-no-id-anyway, and only the last is reported as unknown.
+
+## "disconnected but enabled" is not evidence
+
+That state marked DP-1 as stale here. On the laptop it is how an idle
+HDMI port reads, with no stale mode anywhere. The detector never used it as
+evidence, but the write-up implied it was one, and the finding's own text
+asserted it as a general truth. Both now say what it is: a description of the
+symptom, with the real evidence being that Sunshine bound a connector the
+compositor is not driving.
+
+## And the one found here: the CUDA check could not work
+
+`nvenc-without-cuda` tested `ldd /usr/bin/sunshine` for a CUDA library.
+Sunshine reaches CUDA through **dlopen**, so a CUDA-enabled build links no
+CUDA library either. The check could only ever return the same answer.
+
+Confirmed by swapping the package. With the CUDA-enabled LizardByte build
+installed and the warning gone from Sunshine's own log, `ldd` still showed
+nothing and the doctor still reported the fault, telling the owner to fix what
+he had just fixed.
+
+Two honest sources replace it, in order. What the running build logged at its
+last start, which outranks everything, because a package can be swapped
+without the service being restarted and then the file and the behaviour
+disagree. That happened here: the binary on disk was the new one and the
+running process was still the old one. Failing that, whether the give-up
+message is compiled into the binary at all, which it is only when CUDA support
+is off.
+
+## A bonus: the empty KMS monitor list was a Sunshine bug
+
+Part five asked whether the empty `KMS monitor list` was NVIDIA-specific, and
+put the question to the AMD laptop, which could not answer it without putting
+`capture = kms` on a host that does not need it.
+
+It did not have to. Sunshine 2026.914 on this same NVIDIA host prints:
+
+```
+-------- Start of KMS monitor list --------
+Monitor 0 is DP-2: VIE W340I165  (DP-2)
+--------- End of KMS monitor list ---------
+```
+
+It was a bug in 2026.516, fixed upstream. Not NVIDIA, not this machine, and
+nothing the laptop needed to test. `output_name` can now be resolved against
+Sunshine's own answer rather than only derived from `connector_id` order,
+which is worth doing and is not done yet.

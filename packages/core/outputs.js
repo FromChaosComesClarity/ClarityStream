@@ -16,15 +16,17 @@
 // index can be derived without parsing a log: connected connectors on the
 // capture card, sorted by ascending connector_id.
 //
-// Sunshine's "KMS monitor list" prints empty on this host, which is why its
-// web UI cannot offer a display picker for KMS capture and why this mapping
-// has to be worked out rather than read off.
-
-const fs = require('node:fs');
-
-function readText(p) {
-  try { return fs.readFileSync(p, 'utf8').trim(); } catch { return null; }
-}
+// Sunshine 2026.516 printed an empty "KMS monitor list", which is why this
+// mapping had to be worked out rather than read off. 2026.914 populates it
+// ("Monitor 0 is DP-2"), so the derivation is now checkable against Sunshine's
+// own answer rather than being the only source.
+//
+// Nothing here touches the filesystem. It was reading /sys/class/drm directly,
+// which made it depend on the hardware of whatever machine it ran on: the test
+// fixture described two monitors and the function answered about the real ones,
+// so a test passed on the development desktop and failed everywhere else. The
+// AMD laptop running this suite found it. Facts come from the probe; this
+// decides what they mean.
 
 // Returns the streamable outputs in Sunshine's own index order, annotated
 // with what the compositor says is on each one.
@@ -35,16 +37,12 @@ function enumerateOutputs(facts) {
   const monitors = facts.compositor.monitors ?? [];
   const connected = card.connectors
     .filter((c) => c.status === 'connected' && !c.isWriteback)
-    .map((c) => {
-      const idRaw = readText(`/sys/class/drm/${c.sysfs}/connector_id`);
-      const mode = (readText(`/sys/class/drm/${c.sysfs}/modes`) || '').split('\n')[0] || null;
-      return {
+      .map((c) => ({
         connector: c.name,
-        connectorId: idRaw === null ? null : Number(idRaw),
-        preferredMode: mode,
+        connectorId: c.connectorId ?? null,
+        preferredMode: c.preferredMode ?? null,
         monitor: monitors.find((m) => m.name === c.name) ?? null
-      };
-    });
+      }));
 
   // A connector whose id could not be read cannot be placed in the order, and
   // guessing its position would mean recommending the wrong monitor. Those go

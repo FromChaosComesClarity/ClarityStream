@@ -38,7 +38,8 @@ function healthy() {
       installed: true, realBin: '/usr/bin/sunshine', capabilitiesReadable: true,
       capabilities: '/usr/bin/sunshine cap_sys_admin,cap_sys_nice=p',
       unitFound: true, unitName: 'app-dev.lizardbyte.app.Sunshine.service',
-      unitEnabled: 'enabled', unitActive: 'active', cudaLinked: true,
+      unitEnabled: 'enabled', unitActive: 'active',
+      cudaCapable: true, cudaWarningAtLastStart: false, sunshineStarted: true, capturedWith: 'kms',
       confRaw: 'capture = kms\nadapter_name = /dev/dri/renderD128\nencoder = nvenc\noutput_name = 2\n',
       logReadable: true, boundConnectorId: 830, kmsListEmpty: false,
       maxNicePriority: 40
@@ -117,14 +118,47 @@ test('a headless output as the stream target is a blocker', () => {
 });
 
 test('NVENC without CUDA is reported, and a CUDA build is not', () => {
+  // What the running build SAID outranks what the binary looks like, because
+  // a package can be swapped without the service being restarted and then the
+  // two disagree. That happened on the development machine.
   const f = healthy();
-  f.sunshine.cudaLinked = false;
-  assert.ok(byId('nvenc-without-cuda').detect(f));
-  f.sunshine.cudaLinked = true;
+  f.sunshine.cudaWarningAtLastStart = true;
+  const hit = byId('nvenc-without-cuda').detect(f);
+  assert.ok(hit);
+  assert.match(hit.evidence, /logged/);
+  assert.strictEqual(hit.fix.kind, 'install-cuda-build');
+
+  f.sunshine.cudaWarningAtLastStart = false;
   assert.strictEqual(byId('nvenc-without-cuda').detect(f), null);
-  // Unknown linkage must not be reported as a fault.
-  f.sunshine.cudaLinked = null;
+});
+
+test('a CUDA build that has not started yet is judged by its binary', () => {
+  const f = healthy();
+  f.sunshine.sunshineStarted = false;
+  f.sunshine.cudaWarningAtLastStart = null;
+
+  f.sunshine.cudaCapable = false;
+  const hit = byId('nvenc-without-cuda').detect(f);
+  assert.ok(hit);
+  assert.match(hit.evidence, /fallback/);
+
+  f.sunshine.cudaCapable = true;
   assert.strictEqual(byId('nvenc-without-cuda').detect(f), null);
+});
+
+test('ldd is not used to decide CUDA, because it cannot', () => {
+  // The original check was `ldd | grep libcuda`, and it was wrong in the worst
+  // direction: Sunshine dlopens CUDA, so a CUDA-enabled build links no CUDA
+  // library either and the fault fired on the very build that fixes it.
+  // Measured on both packages. Neither linkage nor its absence may decide it.
+  const f = healthy();
+  f.sunshine.sunshineStarted = false;
+  f.sunshine.cudaWarningAtLastStart = null;
+  f.sunshine.cudaCapable = null;
+  const hit = byId('nvenc-without-cuda').detect(f);
+  assert.ok(hit, 'it should say something');
+  assert.strictEqual(hit.unknown, true, 'and that something is "I could not tell"');
+  assert.match(hit.title, /could not tell/i);
 });
 
 test('capture bound to a port with nothing on it is a blocker', () => {
@@ -153,17 +187,46 @@ test('capture bound to a display the compositor is driving says nothing', () => 
   assert.strictEqual(byId('capture-bound-to-undriven-connector').detect(f), null);
 });
 
-test('a Sunshine that has never started is not reported as mis-bound', () => {
-  // No log, or a log with no connector line, is not evidence of a fault. It
-  // is the absence of evidence, and those are reported differently.
-  const f = healthy();
-  f.sunshine.boundConnectorId = null;
-  assert.strictEqual(byId('capture-bound-to-undriven-connector').detect(f), null);
+test('no connector id in the log means three different things', () => {
+  // Found by the AMD laptop running this suite. The detector treated a
+  // missing connector id as "Sunshine has never started", and on the Wayland
+  // capture path Sunshine never logs one however often it starts. The verdict
+  // was right and the reason it gave was wrong, which is its own kind of
+  // wrong in a tool whose whole claim is that it explains itself.
+  const fault = byId('capture-bound-to-undriven-connector');
 
-  const g = healthy();
-  g.sunshine.logReadable = false;
-  g.sunshine.boundConnectorId = null;
-  assert.strictEqual(byId('capture-bound-to-undriven-connector').detect(g), null);
+  // 1. Genuinely never started: nothing to say.
+  const never = healthy();
+  never.sunshine.boundConnectorId = null;
+  never.sunshine.sunshineStarted = false;
+  never.sunshine.capturedWith = null;
+  assert.strictEqual(fault.detect(never), null);
+
+  // 2. Started, but capturing through Wayland, which logs no connector id.
+  //    Normal, and not a fault.
+  const wayland = healthy();
+  wayland.sunshine.boundConnectorId = null;
+  wayland.sunshine.sunshineStarted = true;
+  wayland.sunshine.capturedWith = 'wayland';
+  assert.strictEqual(fault.detect(wayland), null);
+
+  // 3. Started on the KMS path and still no connector id. That is genuinely
+  //    unreadable, and it says so rather than picking one of the above.
+  const odd = healthy();
+  odd.sunshine.boundConnectorId = null;
+  odd.sunshine.sunshineStarted = true;
+  odd.sunshine.capturedWith = 'kms';
+  const hit = fault.detect(odd);
+  assert.ok(hit);
+  assert.strictEqual(hit.unknown, true);
+  assert.match(hit.title, /could not tell/i);
+  assert.ok(!diagnose(odd).blockers.map((b) => b.id).includes('capture-bound-to-undriven-connector'));
+
+  // And an unreadable log is still nothing to say.
+  const nolog = healthy();
+  nolog.sunshine.logReadable = false;
+  nolog.sunshine.boundConnectorId = null;
+  assert.strictEqual(fault.detect(nolog), null);
 });
 
 test('an unreachable compositor cannot confirm the bound port either', () => {

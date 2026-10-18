@@ -210,15 +210,33 @@ const FAULTS = [
     // against whatever the kernel reported then.
     //
     // Measured on this machine. After a monitor was unplugged, Sunshine kept
-    // binding the connector it had left behind, which sysfs reported as
-    // disconnected but still enabled: the kernel was holding a mode on an
-    // empty port. Capturing it gives a stream of whatever is left in that
-    // scanout buffer, which is not the desktop.
+    // binding the connector it had left behind. Capturing it gives a stream of
+    // whatever is left in that scanout buffer, which is not the desktop.
+    //
+    // The comparison is against what the compositor drives, NOT against the
+    // connector's sysfs state. "disconnected but enabled" is how an idle port
+    // reads on amdgpu with nothing plugged in, so it is a description of the
+    // symptom here and never the evidence.
     detect: (f) => {
       if (!f.sunshine.installed) return null;
       if (f.sunshine.logReadable !== true) return null;
       const bound = f.sunshine.boundConnectorId;
-      if (bound === null) return null;                 // never started, nothing to say
+      if (bound === null) {
+        // No connector line means one of two things, and they are not the
+        // same. The AMD laptop running this found the distinction missing:
+        // on the Wayland capture path Sunshine never logs a connector id at
+        // all, and the detector was calling that "never started".
+        if (f.sunshine.sunshineStarted === false) return null;   // genuinely never ran
+        if (f.sunshine.capturedWith && f.sunshine.capturedWith !== 'kms') return null;
+        if (f.sunshine.sunshineStarted) return {
+          title: 'Could not tell which port Sunshine bound',
+          evidence: 'Sunshine has started but logged no connector id, and no capture backend ' +
+                    'could be read from its log either.',
+          unknown: true,
+          fix: { kind: 'none' }
+        };
+        return null;                                   // no log at all: nothing to say
+      }
 
       const card = f.gpus.find((g) => g.connectedCount > 0);
       if (!card) return null;
@@ -255,10 +273,14 @@ const FAULTS = [
           : `Sunshine bound connector ${bound}, which is not a connector on ${card.card}. ` +
             `The compositor is driving ${drivenNames}.`,
         detail: who && who.status === 'disconnected' && who.enabled === 'enabled'
-          ? 'A port that reads disconnected but enabled is one the kernel has not torn down ' +
-            'since the monitor was removed. Sunshine resolves its capture target at service ' +
-            'start and will keep choosing it. Rebooting clears it; restarting Sunshine does ' +
-            'not, which was measured.'
+          // On its own this state means nothing: an idle port reads exactly
+          // this way on amdgpu, which the AMD laptop running this confirmed.
+          // What makes it a fault here is that Sunshine bound it while the
+          // compositor drives something else.
+          ? 'This port reads disconnected but still enabled, which on its own is how an idle ' +
+            'port looks on some drivers. What matters is that Sunshine bound it anyway. It ' +
+            'resolves its capture target at service start and will keep choosing it. Rebooting ' +
+            'clears it; restarting Sunshine does not, which was measured.'
           : 'Sunshine resolves its capture target when its service starts, against whatever ' +
             'the kernel reported at that moment.',
         fix: { kind: 'reboot-to-clear-connectors' }
@@ -557,27 +579,55 @@ const FAULTS = [
     //    Reverting back to GPU -> RAM -> GPU"
     // The captured frame is already in VRAM and the encoder is on the same
     // card, but without CUDA support in the build it cannot be handed over
-    // directly, so every frame is copied out to system memory and back. It
-    // still streams; it costs latency and bandwidth that the hardware should
-    // not have to spend.
+    // directly, so every frame is copied out to system memory and back.
     //
-    // Measured here: `ldd /usr/bin/sunshine` links no CUDA library at all, so
-    // this is a property of the package, not of the configuration. Nothing in
-    // sunshine.conf can fix it, and saying so is more use than offering a
-    // setting that will not help.
+    // This was first written against `ldd`, and `ldd` was the wrong evidence:
+    // Sunshine reaches CUDA through dlopen, so a CUDA-enabled build links no
+    // CUDA library either, and the check reported the fault on the very build
+    // that fixes it. Measured on both packages.
+    //
+    // Two better sources, in order. What the running build said at its last
+    // start outranks everything, because a package can be swapped without the
+    // service being restarted and then the file and the behaviour disagree.
+    // Failing that, whether the give-up message is compiled into the binary at
+    // all, which it only is when CUDA support is off.
     detect: (f) => {
-      if (!f.sunshine.installed || !f.nvidia.present) return null;
-      if (f.sunshine.cudaLinked === null) return null;       // could not tell
-      if (f.sunshine.cudaLinked) return null;
+      if (!f.sunshine.installed) return null;
+      if (!f.nvidia.present || !f.nvidia.nvencPresent) return null;
+
+      const saidIt = f.sunshine.cudaWarningAtLastStart;
+      const capable = f.sunshine.cudaCapable;
+
+      // The running build is the authority when it has actually started.
+      if (f.sunshine.sunshineStarted && saidIt === true) {
+        return {
+          evidence: 'Sunshine logged "Attempting to use NVENC without CUDA support" at its last start.',
+          detail: 'Frames go GPU -> RAM -> GPU instead of staying in VRAM. Streaming works; it ' +
+                  'costs latency. No setting changes it: it is how the package was built.',
+          fix: { kind: 'install-cuda-build' }
+        };
+      }
+      if (f.sunshine.sunshineStarted && saidIt === false) return null;
+
+      // Not started, or no log. Fall back to the binary itself.
+      if (capable === true) return null;
+      if (capable === false) {
+        return {
+          evidence: 'The installed Sunshine binary carries the "without CUDA support" fallback, ' +
+                    'which is only compiled in when CUDA support is off.',
+          detail: 'Frames will go GPU -> RAM -> GPU instead of staying in VRAM. Streaming works; ' +
+                  'it costs latency. No setting changes it: it is how the package was built.',
+          fix: { kind: 'install-cuda-build' }
+        };
+      }
       return {
-        evidence: 'The installed Sunshine binary is not linked against CUDA.',
-        detail: 'Frames go GPU -> RAM -> GPU instead of staying in VRAM. ' +
-                'Streaming works; it costs latency. Fixing it needs a CUDA-enabled build.',
+        title: 'Could not tell whether this Sunshine build uses CUDA',
+        evidence: 'Neither the binary nor the log could be read.',
+        unknown: true,
         fix: { kind: 'none' }
       };
     }
   },
-
   {
     id: 'moonlight-missing',
     title: 'Moonlight is not installed on this machine',

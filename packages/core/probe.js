@@ -38,7 +38,11 @@ function probeGpus() {
       // connector it bound. Needed for every connector, not just the
       // connected ones, or a stream bound to an empty port cannot be named.
       const idRaw = readText(`/sys/class/drm/${c}/connector_id`);
+      // The mode the connector prefers, which is what a headless or
+      // switched-off output can still tell us about itself.
+      const modes = readText(`/sys/class/drm/${c}/modes`);
       connectors.push({
+        preferredMode: modes ? modes.split('\n')[0].trim() || null : null,
         name: c.slice(entry.length + 1),
         sysfs: c,
         connectorId: idRaw === null ? null : Number(idRaw),
@@ -184,6 +188,15 @@ function readSunshineLog(logPath) {
     .filter(Boolean)
     .map((m) => Number(m[1]));
 
+  // Which capture backend the running build chose. A host on the Wayland path
+  // never logs a connector id at all, and that is not the same as never
+  // having started.
+  const capturedWith = run.some((l) => /Screencasting with KMS/i.test(l)) ? 'kms'
+    : run.some((l) => /Screencasting with Wayland/i.test(l)) ? 'wayland'
+    : null;
+  const sunshineStarted = run.some((l) => /Sunshine version:/.test(l));
+  const cudaWarningAtLastStart = run.some((l) => /without CUDA support/i.test(l));
+
   // An empty list means Sunshine could not enumerate displays through KMS at
   // all, which is why output_name then resolves to nothing.
   const start = run.findIndex((l) => l.includes('Start of KMS monitor list'));
@@ -192,6 +205,9 @@ function readSunshineLog(logPath) {
 
   return {
     logReadable: true,
+    sunshineStarted,
+    capturedWith,
+    cudaWarningAtLastStart,
     boundConnectorId: ids.length ? ids[ids.length - 1] : null,
     kmsListEmpty
   };
@@ -206,16 +222,30 @@ function probeSunshine() {
   const caps = realBin ? tryExec('getcap', [realBin]) : null;
 
   // Whether this build can hand a captured frame straight to NVENC, or has to
-  // copy it out to system memory and back. Matched on the library soname, not
-  // on the substring "cuda": libicudata.so contains it and is unrelated.
-  let cudaLinked = null;
+  // copy it out to system memory and back.
+  //
+  // NOT from `ldd`. That was the first test here and it was wrong: Sunshine
+  // reaches CUDA through dlopen, so even a CUDA-enabled build links no CUDA
+  // library, and the check reported a false fault on the very build that
+  // fixes it. Measured on both packages.
+  //
+  // The build either contains the code path that gives up, or it does not.
+  // That string is only compiled in when SUNSHINE_ENABLE_CUDA is off, so its
+  // presence is the property itself rather than a proxy for it.
+  const GIVE_UP = 'Attempting to use NVENC without CUDA support';
+  let cudaCapable = null;
   if (realBin) {
-    const ldd = tryExec('ldd', [realBin]);
-    if (ldd.ok) {
-      cudaLinked = /\blibcuda\.so|\blibnvcuvid\.so|\blibnvidia-encode\.so/.test(ldd.stdout);
+    const strings = tryExec('grep', ['-c', GIVE_UP, realBin]);
+    // grep exits 1 with no match, which is the CUDA-enabled case, so the
+    // exit status cannot be used to decide whether the check worked.
+    if (strings.ok || strings.code === 1) {
+      cudaCapable = !(Number(strings.stdout.trim()) > 0);
     }
   }
 
+  // What the running build actually said at its last start, which outranks
+  // anything inferred from the file: a package can be swapped without the
+  // service being restarted, and then the file and the behaviour disagree.
   // Prefer a config that already exists; otherwise name where one belongs.
   // Sunshine writes its own on first run, and we may need to write ours
   // before it ever starts, so this is never null.
@@ -267,7 +297,7 @@ function probeSunshine() {
     unitName,
     unitFound: Boolean(unitName),
     maxNicePriority,
-    cudaLinked,
+    cudaCapable,
     unitEnabled: unit.ok ? unit.stdout.trim() : (unit.stdout || '').trim() || 'unknown',
     unitActive: active.ok ? active.stdout.trim() : (active.stdout || '').trim() || 'unknown'
   };

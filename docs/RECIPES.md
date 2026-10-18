@@ -35,7 +35,7 @@ The two rules are Clarity's two rules:
 | `output-pinned-with-one-display` | degraded | `output_name` is set on a machine with one display, where it cannot help and can only break later when a monitor is added or removed. |
 | `output-not-pinned` | degraded | Two or more displays and Sunshine is streaming one you did not choose. `output_name` is an index for KMS capture, not a connector name, so the obvious value does nothing. |
 | `encoder-not-pinned-nvenc` | degraded | NVENC present but `encoder` unset, so encoding may land on the CPU. |
-| `nvenc-without-cuda` | degraded | The Sunshine build links no CUDA, so frames go GPU to RAM to GPU instead of staying in VRAM. No setting fixes it. |
+| `nvenc-without-cuda` | degraded | The Sunshine build has no CUDA support, so frames go GPU to RAM to GPU instead of staying in VRAM. No setting fixes it; it is how the package was built. Decided by what the running build logged at its last start, falling back to whether the give-up message is compiled into the binary. Never by `ldd`, which cannot tell: Sunshine dlopens CUDA. |
 | `sunshine-cannot-raise-its-priority` | degraded | Sunshine asks for nice -10 and -15 for capture and encode and is refused, so those threads queue behind ordinary work. Felt as uneven frame pacing rather than a lower frame rate. |
 | `moonlight-missing` | info | Only matters if this machine is also a client. |
 
