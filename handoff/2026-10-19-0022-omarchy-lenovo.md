@@ -127,3 +127,12 @@ with no gaps.
 `Low Res Desktop` launch-and-fail. Super+W under `--capture-system-keys
 always` (my injected Ctrl+Alt+Shift+S is Moonlight's own chord, so it
 proves nothing about inhibition).
+
+## Addendum, 00:32 UTC
+
+The owner asked for the two stale `moonlight stream` processes to be killed.
+Done. Both exited on plain SIGTERM, so they weren't stuck, just never told to
+stop. Their client scope went with them. They're gone, so you can't examine
+them. For the record, they started at 21:44:16 and 21:45:47 UTC on 13 October,
+91 s apart, with the same arguments. That looks like two launches of the same
+session from one client instance, where the second didn't replace the first.
