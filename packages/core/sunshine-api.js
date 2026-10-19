@@ -142,7 +142,40 @@ async function closeSession(creds) {
   return { ok: r.json?.status !== false, reason: r.json?.status === false ? 'Sunshine refused.' : null };
 }
 
+// Asking is not the same as it having happened. `closeSession` reports that
+// Sunshine accepted the request, which it does before the session is gone, so
+// a window saying "Session stopped" on the strength of that is saying
+// something it does not know.
+//
+// The same reasoning as the client's Stop button, which had a louder version
+// of this: /serverinfo is the authority on whether a session is still held.
+async function closeSessionAndConfirm(creds, {
+  timeout = 20000, pollMs = 750,
+  // Injected so what this concludes from Sunshine's state over time can be
+  // tested without a Sunshine.
+  state = sessionState, close = closeSession
+} = {}) {
+  const asked = await close(creds);
+  if (!asked.ok) return { ...asked, ended: false };
+
+  const started = Date.now();
+  while (Date.now() - started < timeout) {
+    const now = await state();
+    if (now.ok && !now.busy) {
+      return { ok: true, ended: true, waitedMs: Date.now() - started };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return {
+    ok: false,
+    ended: false,
+    waitedMs: Date.now() - started,
+    reason: `Sunshine accepted the request but still reports a session after ` +
+            `${Math.round((Date.now() - started) / 1000)}s.`
+  };
+}
+
 module.exports = {
   request, checkCredentials, submitPin, listClients, unpairClient,
-  sessionState, closeSession, HOST, PORT
+  sessionState, closeSession, closeSessionAndConfirm, HOST, PORT
 };

@@ -138,11 +138,74 @@ function quitCommand(address) {
   return ['moonlight', 'quit', address];
 }
 
+// Ending a session, and then checking that it ended.
+//
+// `moonlight quit` is documented as "Quit the currently running app", which is
+// not the same as releasing the session, and the host can stay held after it
+// returns. So the command is not the answer: the host's own state is.
+//
+// This exists because the button that called it reported success
+// unconditionally. It spawned the command detached, ignored its output, never
+// waited, and returned ok. The spawn succeeding is not the session ending, and
+// saying otherwise is the one thing this project is supposed to never do.
+//
+// /serverinfo is plain HTTP and needs no pairing, so the client can always
+// check, whatever happens to the command.
+async function endSession(address, {
+  timeout = 25000, pollMs = 1000,
+  // Injected so the behaviour that matters here, what it concludes from the
+  // host's state over time, can be tested without a host or a Moonlight.
+  run, probeHost = serverInfo, haveMoonlight = moonlightPresent
+} = {}) {
+  const started = Date.now();
+  const waited = () => Date.now() - started;
+
+  const before = probeHost(address);
+  if (!before.reachable) {
+    return { ok: false, ended: null, reason: 'The host did not answer, so nothing was asked of it.' };
+  }
+  if (!before.busy) {
+    return { ok: true, ended: true, alreadyFree: true, reason: 'No session was running.' };
+  }
+  if (!haveMoonlight()) {
+    return { ok: false, ended: false, reason: 'Moonlight is not installed, so there is nothing to ask.' };
+  }
+
+  // Waited for, not fired and forgotten. Moonlight starts a whole Qt
+  // application to send this, so it is slow rather than instant.
+  const [cmd, ...args] = quitCommand(address);
+  const exec = run ?? ((c, a) => tryExec(c, a, { timeout: Math.max(5000, timeout - 5000) }));
+  const r = exec(cmd, args);
+
+  // Its exit status is worth reporting and is not worth trusting: it exits 0
+  // on a host with no session at all. The host's state decides.
+  while (waited() < timeout) {
+    const now = probeHost(address);
+    if (now.reachable && !now.busy) {
+      return { ok: true, ended: true, waitedMs: waited(), commandOk: Boolean(r.ok) };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  const last = probeHost(address);
+  return {
+    ok: false,
+    ended: false,
+    waitedMs: waited(),
+    commandOk: Boolean(r.ok),
+    reason: last.reachable
+      ? `The host still reports a session after ${Math.round(waited() / 1000)}s. ` +
+        'Moonlight\'s quit ends the running app, which does not always release the session. ' +
+        'Stopping it from the host window does.'
+      : 'The host stopped answering while it was being checked.'
+  };
+}
+
 function moonlightPresent() {
   return Boolean(which('moonlight'));
 }
 
 module.exports = {
   serverInfo, readMoonlightHosts, randomPin, pairCommand, streamCommand,
-  quitCommand, moonlightPresent, CAPTURE_KEYS, ESCAPE_COMBO, MOONLIGHT_CONF
+  quitCommand, endSession, moonlightPresent, CAPTURE_KEYS, ESCAPE_COMBO, MOONLIGHT_CONF
 };

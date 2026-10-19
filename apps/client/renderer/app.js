@@ -111,9 +111,22 @@ function drawApps() {
       'A session is already running on this host. Closing the window does not end it.'));
     const stop = el('button', 'danger', 'Stop the session');
     stop.addEventListener('click', async () => {
-      await window.cs.quit({ address: host.address });
-      toast('Asked the host to stop the session.');
-      setTimeout(() => refresh().catch(() => {}), 2500);
+      const was = stop.textContent;
+      stop.disabled = true;
+      stop.textContent = 'Stopping…';
+      try {
+        // The result is the host's own state afterwards, not whether the
+        // command was sent. "Asked the host to stop" told you nothing, and
+        // told it confidently.
+        const r = await window.cs.quit({ address: host.address });
+        if (r.alreadyFree) toast('No session was running.');
+        else if (r.ended) toast(`Session ended after ${Math.round((r.waitedMs ?? 0) / 1000)}s.`);
+        else toast(r.reason ?? 'The session did not end.', true);
+      } finally {
+        stop.disabled = false;
+        stop.textContent = was;
+        refresh().catch(() => {});
+      }
     });
     stopRow.append(stop);
   }

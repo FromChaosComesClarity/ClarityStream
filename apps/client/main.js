@@ -150,12 +150,10 @@ ipcMain.handle('launch', (_e, { address, appName, settings }) => {
   return { ok: true, command: [cmd, ...args].join(' ') };
 });
 
-ipcMain.handle('quit', (_e, { address }) => {
-  const [cmd, ...args] = hostLink.quitCommand(address);
-  const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
-  child.unref();
-  return { ok: true, command: [cmd, ...args].join(' ') };
-});
+// Asks the host to end the session, then checks that it did. This used to
+// spawn the command detached and return ok regardless, so the window said the
+// session had been stopped whether or not anything happened.
+ipcMain.handle('quit', async (_e, { address }) => hostLink.endSession(address));
 
 ipcMain.handle('open:moonlight', () => {
   const child = spawn('moonlight', [], { detached: true, stdio: 'ignore' });

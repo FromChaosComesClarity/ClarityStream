@@ -313,7 +313,7 @@ ipcMain.handle('session:state', async () => {
 ipcMain.handle('session:close', async () => {
   const creds = readCredentials();
   if (!creds) return { ok: false, reason: 'No Sunshine credentials saved yet. Set them under Devices.' };
-  return sunshineApi.closeSession(creds);
+  return sunshineApi.closeSessionAndConfirm(creds);
 });
 
 ipcMain.handle('pairing:saveCredentials', async (_e, { username, password }) => {

@@ -229,10 +229,11 @@ async function drawSession() {
 
 $('stopSession').addEventListener('click', () => withBusy(async () => {
   const r = await window.cs.closeSession();
-  toast(r.ok ? 'Session stopped.' : (r.reason ?? 'Could not stop it'), !r.ok);
+  // What Sunshine reports afterwards, not that it took the request.
+  toast(r.ended ? `Session ended after ${Math.round((r.waitedMs ?? 0) / 1000)}s.`
+                : (r.reason ?? 'Could not stop it'), !r.ended);
   await drawSession();
-  // Ending a session runs the undo that puts the display back, so the rest of
-  // the window is now out of date.
+  // Ending a session changes what the rest of the window is describing.
   await refresh();
 }, 'Stopping the session'));
 

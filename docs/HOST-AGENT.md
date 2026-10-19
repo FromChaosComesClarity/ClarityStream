@@ -72,6 +72,14 @@ unauthenticated and the client already reads it. The button should:
 That alone turns a button that lies into a button that tells you it did not
 work, which is most of the value. Do this first, whatever happens to the rest.
 
+**Done in 0.8.1.** `host-link.endSession` runs the command, waits for it, then
+polls `/serverinfo` until the host stops reporting a session, and returns what
+it found. The host's own Stop button had a quieter version of the same fault,
+reporting that Sunshine *accepted* the close rather than that the session had
+ended, and `sunshine-api.closeSessionAndConfirm` now polls for the same reason.
+Both are covered by tests that assert the failing case, which is the one the
+old code called success.
+
 ## The agent
 
 A small HTTP service inside the Clarity Stream **host** app.
