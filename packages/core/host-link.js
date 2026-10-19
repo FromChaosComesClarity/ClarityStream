@@ -31,7 +31,12 @@ function serverInfo(address, port = 47989, { uniqueId = '0123456789ABCDEF', time
   return {
     reachable: true,
     hostname: tag(xml, 'hostname'),
-    version: tag(xml, 'appversion'),
+    // NOT Sunshine's version. `appversion` is the GameStream protocol version
+    // Sunshine reports for compatibility: 7.1.431 from a host running
+    // Sunshine 2026.914.233613. The client used to print it as "Sunshine
+    // 7.1.431", which is a confident wrong answer about what is installed.
+    // Caught by the macOS client, which displayed the same thing.
+    protocolVersion: tag(xml, 'appversion'),
     state: tag(xml, 'state'),
     // A session already in progress refuses a new one, and the message a
     // client shows for that is unhelpfully generic, so it is named here.

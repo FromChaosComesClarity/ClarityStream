@@ -54,7 +54,7 @@ function drawHosts() {
     const main = el('div', 'host-main');
     main.append(el('div', 'host-name', h.name));
     const bits = [h.address];
-    if (h.version) bits.push(`Sunshine ${h.version.split('.').slice(0, 3).join('.')}`);
+    if (h.protocolVersion) bits.push(`GameStream ${h.protocolVersion.split('.').slice(0, 3).join('.')}`);
     if (!h.reachable) bits.push('not answering, so it cannot be paired or played');
     else if (h.busy) bits.push('a session is already running');
     main.append(el('div', 'host-sub', bits.join(' · ')));
