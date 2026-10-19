@@ -82,13 +82,13 @@ function describeFix(fix) {
     case 'user-service': return `systemctl --user enable --now ${fix.unit}`;
     case 'choose-output': return `pin output_name to one of ${fix.candidates.join(', ')}`;
     case 'open-ports': return `open ${fix.ports.map((p) => `${p.port}/${p.proto}`).join(', ')} in ${fix.firewall}`;
-    case 'wire-resize': return 'clarity-stream apps --apply';
     case 'unpin-output': return 'remove output_name; with one display it is only a liability';
     case 'reboot-to-clear-connectors': return 'reboot: the kernel is holding a mode on a port with nothing on it';
     case 'plug-in-ethernet': return `plug a cable into ${fix.ports.join(' or ')}`;
     case 'lower-client-bitrate': return 'lower the bitrate on the client until it holds';
     case 'raise-nice-limit': return 'allow Sunshine to run at a negative nice value';
     case 'install-cuda-build': return 'install a CUDA-enabled Sunshine build (sunshine-bin)';
+    case 'remove-resize-prep': return 'clarity-stream apps --apply (removes it)';
     case 'modprobe-conf': return `write "${fix.line}" to ${fix.path}`;
     case 'target-real-monitor': return 'aim capture at a monitor that is actually being driven';
     default: return fix.kind;
@@ -177,36 +177,19 @@ function appsCmd(rest) {
   console.log(`${C.b}Clarity Stream — Moonlight app list${C.x}`);
   console.log(`${C.d}${appsPath}${C.x}\n`);
 
-  const settings = require('../packages/core/settings').read();
-  const streamDisplay = require('../packages/core/stream-display');
-  // The resize goes in Sunshine's global prep command, not on each entry: a
-  // client that picks one of Sunshine's own tiles has to get it too.
-  if (settings.strategy === 'resize') {
-    const conf = require('../packages/core/sunshine-conf');
-    const want = streamDisplay.globalPrepValue(streamDisplay.SCRIPT_PATH);
-    const already = streamDisplay.globalPrepHasOurs(
-      (facts.sunshine.confRaw ?? '').match(/^\s*global_prep_cmd\s*=\s*(.+?)\s*$/m)?.[1], streamDisplay.SCRIPT_PATH);
-    console.log(`  resize     every session, whichever tile the client picks`);
-    console.log(`  ${C.d}set when a session starts, put back when it ends${C.x}`);
+  // Clarity Stream used to add a global_prep_cmd here that resized the
+  // streamed display for the duration of a session. That is gone. A leftover
+  // one points at a script that no longer exists, and Sunshine aborts any
+  // session whose prep command fails, so it is removed rather than ignored.
+  const leftover = require('../packages/core/stream-prep').leftover(facts);
+  if (leftover.present) {
+    console.log(`  ${C.y}removing a leftover resize step from global_prep_cmd${C.x}`);
+    console.log(`  ${C.d}it points at a script this version no longer installs${C.x}`);
     if (apply) {
-      streamDisplay.installScript({ cliPath: require('../packages/core/paths').cliPath() });
-      if (!already) {
-        const cur = facts.sunshine.confExists
-          ? require('node:fs').readFileSync(facts.sunshine.confPath, 'utf8') : '';
-        const { text } = conf.apply(cur, { global_prep_cmd: want });
-        conf.write(facts.sunshine.confPath, text);
-        console.log(`  ${C.g}global_prep_cmd set${C.x}`);
-      } else {
-        console.log(`  ${C.d}global_prep_cmd already set${C.x}`);
-      }
-    } else if (!already) {
-      console.log(`  ${C.y}global_prep_cmd is not set yet${C.x}`);
+      require('../packages/core/stream-prep').remove(facts);
+      console.log(`  ${C.g}removed${C.x}`);
     }
     console.log('');
-  }
-  let scriptPath = null;
-  if (settings.strategy === 'none') {
-    console.log(`  ${C.d}entries stream the monitor as it is; the client scales${C.x}\n`);
   }
 
   const clarityApp = require('../packages/core/clarity-app');
@@ -266,129 +249,6 @@ function appsCmd(rest) {
 // Called by Sunshine around a session, through the small shell script in
 // ~/.local/share/clarity-stream. Everything that decides anything lives here
 // rather than in that script.
-function streamDisplayCmd(rest) {
-  const sd = require('../packages/core/stream-display');
-  const hypr = require('../packages/core/hypr');
-  const { enumerateOutputs, defaultOutput } = require('../packages/core/outputs');
-
-  const action = rest.find((a) => !a.startsWith('--'));
-  const dry = rest.includes('--dry-run');
-  const num = (flag, fallback) => {
-    const i = rest.indexOf(flag);
-    return i === -1 ? fallback : Number(rest[i + 1]) || fallback;
-  };
-
-  const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
-  const say = (m) => console.log(`${stamp()}  ${m}`);
-
-  const monitors = hypr.monitors();
-  if (!monitors) { say('the compositor did not answer; leaving the display alone'); return 1; }
-
-  if (action === 'stop') {
-    const saved = sd.readSaved();
-    if (!saved) { say('nothing to restore'); return 0; }
-    const sel = saved.description ? `desc:${saved.description}` : saved.connector;
-    const mode = `${saved.width}x${saved.height}@${Number(saved.refresh).toFixed(5)}`;
-    say(`restoring ${saved.connector} to ${mode}${dry ? ' (dry run)' : ''}`);
-    if (!dry) {
-      hypr.evalLua(`hl.monitor(${hypr.luaTable({
-        output: sel, mode, position: saved.position, scale: saved.scale, disabled: false
-      })})`);
-      sd.clearState();
-    }
-    return 0;
-  }
-
-  if (action !== 'start') {
-    console.error('usage: clarity-stream stream-display start|stop [--width N --height N --fps N]');
-    return 2;
-  }
-
-  const width = num('--width', 0);
-  const height = num('--height', 0);
-  const fps = num('--fps', 60);
-  if (!width || !height) { say('the client did not say what size it wanted; leaving the display alone'); return 0; }
-
-  // Which monitor gets streamed: whatever Sunshine is pointed at, so the
-  // resize and the capture can never disagree about the target.
-  const facts = probe();
-  const outs = enumerateOutputs(facts);
-  const idx = facts.sunshine.confRaw?.match(/^\s*output_name\s*=\s*(\d+)/m)?.[1];
-  // `??` falls through on null and undefined, not on false, so the old
-  // `(idx !== undefined && find(...)) ?? fallback` produced `false` whenever
-  // output_name was unset and never reached the fallback at all. Every
-  // single-monitor host took that path, which is most laptops, and the resize
-  // never ran there. Found by the session on the AMD machine, by reading.
-  const pinned = idx === undefined ? undefined : outs.find((o) => String(o.index) === idx);
-  // Unpinned, use the one the diagnosis would recommend rather than whichever
-  // output happens to come first. On a single-monitor host they are the same
-  // thing; on a desktop they are not, and resizing the wrong screen is worse
-  // than resizing none.
-  const target = pinned ?? defaultOutput(facts) ?? outs.find((o) => o.monitor);
-  if (!target?.monitor) { say('no streamable monitor; leaving the display alone'); return 1; }
-
-  const live = monitors.find((m) => m.name === target.connector);
-  if (!live) { say(`${target.connector} is not being driven; leaving it alone`); return 1; }
-
-  const want = sd.chooseMode(live.availableModes, { width, height, fps });
-  if (!want) {
-    // Moving the desktop to "nearly" the requested size still makes Sunshine
-    // scale, and has disturbed everything for nothing.
-    say(`${live.name} has no ${width}x${height} mode; leaving it alone and letting Sunshine scale`);
-    return 0;
-  }
-  // Already the right size. Refresh is only worth touching when the panel is
-  // running slower than the client asked for, because a monitor cannot
-  // produce 120 distinct frames a second at 60Hz. Lowering it would cost a
-  // mode change, and a blank screen, to make the stream no better.
-  // The chosen mode is the one already running, in both dimensions and
-  // refresh: changing to it costs a reconfigure and a blank screen and
-  // achieves nothing. Happens on a panel with a single refresh rate when the
-  // client asks for more than it can do.
-  if (live.width === want.width && live.height === want.height &&
-      Math.abs(live.refreshRate - want.refresh) < 0.5) {
-    say(`${live.name} is already ${want.raw}; nothing to change`);
-    return 0;
-  }
-
-  if (live.width === want.width && live.height === want.height) {
-    if (live.refreshRate + 0.5 >= fps) {
-      say(`${live.name} is already ${live.width}x${live.height} at ${live.refreshRate.toFixed(2)}Hz; nothing to change`);
-      return 0;
-    }
-    say(`${live.name} is already ${live.width}x${live.height} but running at ` +
-        `${live.refreshRate.toFixed(2)}Hz, below the ${fps} the client asked for`);
-  }
-
-  // Recorded before anything changes, so the undo has something to restore
-  // even if the next step fails.
-  const state = {
-    connector: live.name,
-    description: live.description || null,
-    width: live.width, height: live.height, refresh: live.refreshRate,
-    position: `${live.x}x${live.y}`, scale: live.scale,
-    at: new Date().toISOString()
-  };
-  say(`${live.name}: ${live.width}x${live.height}@${live.refreshRate.toFixed(2)} -> ${want.raw}${dry ? ' (dry run)' : ''}`);
-  if (dry) return 0;
-
-  sd.saveState(state);
-  const sel = state.description ? `desc:${state.description}` : state.connector;
-  const r = hypr.evalLua(`hl.monitor(${hypr.luaTable({
-    output: sel, mode: `${want.width}x${want.height}@${want.refresh.toFixed(5)}`,
-    position: state.position, scale: state.scale, disabled: false
-  })})`);
-  if (!r.ok) {
-    say(`the compositor refused: ${r.output}`);
-    // The mode did not take, so there is nothing to undo, and leaving a state
-    // file behind would make the host app offer to restore something that was
-    // never changed.
-    sd.clearState();
-    return 1;
-  }
-  return 0;
-}
-
 function firewallCmd(rest) {
   const firewall = require('../packages/core/firewall');
   const paths = require('../packages/core/paths');
@@ -516,7 +376,6 @@ switch (cmd) {
   case 'fix': code = fixCmd(rest); break;
   case 'apps': code = appsCmd(rest); break;
   case 'firewall': code = firewallCmd(rest); break;
-  case 'stream-display': code = streamDisplayCmd(rest); break;
   case 'verify': code = verifyCmd(rest); break;
   case 'measure': code = measureCmd(rest); break;
   default:
@@ -527,8 +386,6 @@ switch (cmd) {
   console.log('                       [--output NAME] [--no-service]');
   console.log('  apps [--apply]       publish the Moonlight app list [--prune-stock]');
   console.log('  firewall [--open]    can other machines reach this host at all');
-  console.log('  stream-display       resize the streamed display for a session');
-  console.log('                       start|stop, called by Sunshine around a stream');
   console.log('  verify [output]      measure real pixels, prove the capture is not black');
   console.log('  measure <image>      report whether a captured frame is black');
     code = cmd ? 2 : 0;

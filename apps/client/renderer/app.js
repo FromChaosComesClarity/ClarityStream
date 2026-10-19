@@ -179,11 +179,12 @@ function drawSettings() {
   pill.textContent = data.moonlight ? 'Moonlight ready' : 'Moonlight missing';
   pill.className = `pill ${data.moonlight ? 'on' : 'off'}`;
 
-  // Say what actually happens, because a resolution the host has no mode for
-  // is scaled rather than refused, and that looks like a bug if unannounced.
+  // Say what actually happens. The host does not change its own resolution
+  // any more, so anything that is not its native shape arrives scaled, and
+  // that looks like a bug when it is not announced.
   $('resHint').textContent =
-    `A Clarity Stream host sets its display to ${s.resolution} for the session and puts it back ` +
-    `afterwards. If it has no mode that shape, it streams what it has and this machine scales it.`;
+    `The host streams whatever its display is already set to, and ${s.resolution} is what this ` +
+    `machine asks for. If they differ, the picture is scaled to fit rather than refused.`;
 }
 
 /* --------------------------------------------------------------- actions */

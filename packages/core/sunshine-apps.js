@@ -79,15 +79,9 @@ function pruneStock(doc) {
 // resolution the client asked for and puts it back afterwards. Sunshine hands
 // it SUNSHINE_CLIENT_WIDTH, HEIGHT and FPS in the environment, which is the
 // only way the host can know what the client chose.
-function buildEntry({ name, cmd, imagePath, prepScript, detached = false }) {
+function buildEntry({ name, cmd, imagePath, detached = false }) {
   const entry = { name };
   if (imagePath) entry['image-path'] = imagePath;
-  if (prepScript) {
-    entry['prep-cmd'] = [{
-      do: `${prepScript} start`,
-      undo: `${prepScript} stop`
-    }];
-  }
   if (detached) entry.detached = [cmd];
   else if (cmd) entry.cmd = cmd;
   return entry;

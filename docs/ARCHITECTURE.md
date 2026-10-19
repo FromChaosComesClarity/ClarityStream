@@ -8,7 +8,7 @@ packages/core/        the engine, no UI, no privilege, runnable over SSH
   faults.js           the Recipe catalogue
   diagnose.js         facts -> findings -> an ordered plan
   sunshine-conf.js    lossless read/modify/write of sunshine.conf
-  stream-display.js   resizes the streamed display for a session, and back
+  stream-prep.js      removes the resize step older versions installed
   verify.js           measures real pixels and interprets the result
   hypr.js             drives Hyprland: set a mode, pin the client window
   outputs.js          which monitor Sunshine actually streams, by index
@@ -51,16 +51,31 @@ and those are reported differently.
 
 ## Decisions, and why
 
-**Resize the real display, do not invent a second one.** The client needs the
-host to scan out at the resolution the client asked for, or the picture is
-scaled. The first answer was a phantom display: force an unused connector on
-with a synthesised EDID, and the client gets a screen of its own while the
-desktop is untouched. It worked and it was the wrong trade. It cost a kernel
-parameter, a reboot per resolution, and a compositor that kept forming
-opinions about the extra output. What ships instead sets the streamed
-monitor's mode for the duration of the session and puts it back afterwards.
-The desktop visibly reflows, twice, and that is the whole cost. Nothing is
-installed and nothing needs undoing at boot.
+**Do not touch the display at all.** The client needs the host to scan out at
+the resolution the client asked for, or the picture is scaled. Two answers
+were built and both are gone.
+
+The first was a phantom display: force an unused connector on with a
+synthesised EDID so the client gets a screen of its own. It worked, and cost a
+kernel parameter, a reboot per resolution, and a compositor that kept forming
+opinions about the extra output.
+
+The second resized the real monitor for the duration of a session. That worked
+too, and was undone by something neither answer anticipated: on this desktop a
+bar panel owns the Hyprland monitor config and rewrites it from **live** state
+whenever the user touches it. Press the scale keybind during a stream, which is
+reachable from the client because shortcuts are forwarded, and the streaming
+resolution is written to disk as though it were a choice. The restore puts the
+runtime back and cannot undo the file. The same file had already produced a
+machine that booted with no video, from an unrelated cause.
+
+So Clarity Stream changes no display state. The person sets the resolution
+before streaming, through whatever owns that configuration on their desktop,
+and the host streams what it finds. Anything that is not the client's shape is
+scaled, which is announced rather than silently worked around.
+
+The general rule learned twice: a streaming tool has no business holding
+temporary state in configuration that something else treats as permanent.
 
 **One display is the default assumption.** `output_name` is a positional
 index, so pinning it on a machine with one monitor cannot help and breaks the
@@ -156,6 +171,7 @@ the window was tiled to 688px, which is just a normal tile on a 3440 monitor.
 - Choosing the streamed monitor by name rather than by index, if Sunshine ever
   grows a way to say it. The index is what Sunshine accepts today, and it is
   positional, which is the whole reason `output-pin-is-stale` has to exist.
-- Recovering a stranded resize faster than Sunshine's session timeout. A
-  hard-killed client leaves the display small until Sunshine gives up on the
-  session, which is over thirty seconds of an unusable desktop.
+- Reading the capture target from Sunshine's own KMS monitor list, which
+  2026.914 populates ("Monitor 0 is DP-2") and 2026.516 printed empty. The
+  index is currently derived from `connector_id` ordering, which is careful
+  rather than checkable.

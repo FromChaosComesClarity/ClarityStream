@@ -237,34 +237,20 @@ function buildApps(apply, pruneStock = false) {
   try { doc = sunshineApps.read(f.sunshine.appsPath); }
   catch (err) { return { ok: false, reason: err.message }; }
 
-  // Under the resize strategy the entries carry a step that sets the streamed
-  // monitor to the client's resolution for the duration of the session.
-  const settings = require('../../packages/core/settings').read();
-  const streamDisplay = require('../../packages/core/stream-display');
-  const conf = require('../../packages/core/sunshine-conf');
-  // Global rather than per-app, so a client picking one of Sunshine's own
-  // tiles is resized too.
-  const prepScript = null;
-  if (settings.strategy === 'resize' && apply) {
-    streamDisplay.installScript({ cliPath: paths.cliPath() });
-    const current = (f.sunshine.confRaw ?? '').match(/^\s*global_prep_cmd\s*=\s*(.+?)\s*$/m)?.[1];
-    if (!streamDisplay.globalPrepHasOurs(current, streamDisplay.SCRIPT_PATH)) {
-      const cur = f.sunshine.confExists ? fs.readFileSync(f.sunshine.confPath, 'utf8') : '';
-      const { text } = conf.apply(cur, {
-        global_prep_cmd: streamDisplay.globalPrepValue(streamDisplay.SCRIPT_PATH)
-      });
-      conf.write(f.sunshine.confPath, text);
-    }
-  }
+
+  // An older version pointed global_prep_cmd at a resize script. Sunshine
+  // aborts any session whose prep command fails, so a leftover one stops
+  // every launch rather than failing quietly.
+  if (apply) require('../../packages/core/stream-prep').remove(f);
 
   const found = clarityApp.find();
   const entries = [];
   if (found.found) {
     entries.push(sunshineApps.buildEntry({
-      name: 'Clarity Couch Mode', cmd: clarityApp.couchCommand(found.path), prepScript
+      name: 'Clarity Couch Mode', cmd: clarityApp.couchCommand(found.path)
     }));
   }
-  entries.push(sunshineApps.buildEntry({ name: 'Clarity Desktop', prepScript }));
+  entries.push(sunshineApps.buildEntry({ name: 'Clarity Desktop' }));
 
   const changes = entries.map((e) => sunshineApps.upsert(doc, e));
   const stock = sunshineApps.stockPresent(doc);

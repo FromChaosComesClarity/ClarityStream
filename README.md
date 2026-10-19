@@ -37,53 +37,40 @@ All three are detected and fixed by name. See [docs/RECIPES.md](docs/RECIPES.md)
 
 ## Getting the client's resolution
 
-Streaming your actual 3440x1440 desktop to a 1280x800 handheld wastes most of
-your bitrate on black bars. So the host has to scan out at the resolution the
-client asked for, for as long as the session lasts.
+**Set it yourself before you stream.** Clarity Stream does not change your
+display configuration, and that is deliberate.
 
-Clarity Stream sets the streamed monitor to that resolution when a stream
-starts and puts it back exactly as it was when the stream ends. It records the
-previous mode, position and scale before changing anything, and keeps that on
-disk rather than in memory, so a crash mid-session does not lose the way back.
-If the host has no mode of the shape the client asked for, it leaves the
-display alone and lets the client scale, which is worse-looking and not broken.
+Streaming a 3440x1440 desktop to a 1280x800 handheld wastes most of the
+bitrate on black bars, so the host should be scanning out at something close
+to the client's shape. Two versions of this tool did that automatically and
+both are gone.
 
-Yes, the desktop visibly reflows, twice. That is the whole cost, and on a
-machine you are streaming away from you are not looking at it.
+The first forced an unused connector on with a synthesised EDID, giving the
+client a screen of its own. It needed a kernel parameter and a reboot, and the
+compositor would not leave the extra output alone.
 
-**What this used to be, and why it is not any more.** The first answer was a
-phantom display: take an unused physical connector, force it on with a
-synthetic EDID generated for the client's resolution, and let the client have
-a screen of its own while the real desktop stays untouched. It worked. The
-measurements are in [docs/DIAGNOSIS.md](docs/DIAGNOSIS.md).
+The second set the real monitor's mode for the duration of the session and put
+it back afterwards. That is undone by something specific and common: on many
+desktops a panel or applet owns the monitor configuration and rewrites it from
+**live** state whenever you touch it. Change the scale during a stream, which
+you can do from the client because shortcuts are forwarded to the host, and
+your streaming resolution is written to disk as though you had chosen it. The
+session restores the runtime and cannot undo the file.
 
-It was still the wrong trade. It needed a kernel parameter, an EDID in the
-initramfs, and a reboot, because NVIDIA reads a firmware EDID only at boot. It
-needed `video=<CONNECTOR>:e` alongside `drm.edid_firmware=`, which is silently
-ignored on its own. And the compositor would not leave it alone: it took a
-workspace, it sat adjacent to the desktop so the pointer slid onto it, and a
-bar panel rewriting the monitor config put it back where it had been. Each of
-those got a fix, and the fixes needed fixes. Removed in 0.7.0, along with
-every kernel parameter it added.
+So the host streams whatever the display is already set to. If that is not the
+shape the client asked for, the picture is scaled to fit, and the client says
+so rather than letting it look like a bug.
 
-## Upgrading from 0.6.x, if you armed a phantom display
+### Upgrading from 0.7.x
 
-If you ran a version before 0.7.0 and armed a phantom display, this version no
-longer knows about it, and the kernel parameters are still on your machine.
-Remove them:
+If an earlier version wired the resize into Sunshine, **it has to be removed**,
+not merely ignored. Sunshine aborts any session whose prep command exits
+non-zero, so a `global_prep_cmd` pointing at a script that is no longer
+installed stops every stream from starting.
 
-```sh
-sudo bash packaging/remove-phantom.sh
-```
-
-It deletes the generated EDID, the bootloader drop-in and the initramfs
-drop-in, rebuilds the initramfs and regenerates the boot entry, and tells you
-if any step fails before you reboot. Nothing else is touched. Reboot when
-convenient; until then the forced connector stays on, because the kernel read
-those parameters at the last boot.
-
-If you never armed one, there is nothing to do. `clarity-stream doctor` will
-tell you either way.
+`clarity-stream doctor` reports it as `resize-prep-cmd-left-behind`, and
+`clarity-stream fix --apply` removes it. A prep command you wrote yourself is
+left exactly as it is.
 
 ## Verifying, instead of hoping
 
@@ -121,7 +108,7 @@ node bin/clarity-stream doctor              # what would stop a stream, with evi
 node bin/clarity-stream verify [output]     # measure real pixels
 node bin/clarity-stream firewall            # can another machine reach this host
 node bin/clarity-stream apps                # the Moonlight entries this publishes
-node bin/clarity-stream stream-display stop # put a stranded display back
+node bin/clarity-stream fix --apply         # apply what needs no root
 ```
 
 Nothing in the engine escalates privilege by itself. Anything requiring root is
@@ -137,12 +124,12 @@ assumed: 32.7 standard deviation on a real desktop against a peak of 1 on
 black. Every reading is in [docs/DIAGNOSIS.md](docs/DIAGNOSIS.md).
 
 A laptop client has paired through the host's own window, streamed, and the
-ultrawide resized to 1920x1080 for the session and returned to 3440x1440
-afterwards.
+ultrawide set to 1920x1080 by hand beforehand, which is how the resolution is
+chosen now.
 
 Working: the probe, the fault catalogue, the diagnosis, the applier for
 everything that does not need root, lossless `sunshine.conf` editing, the
-session resize and its restore, firewall diagnosis for ufw and firewalld on
+firewall diagnosis for ufw and firewalld on
 both address families, in-app pairing, and pixel verification.
 
 The privileged helper is built: `bin/clarity-stream-helper` validates every
@@ -230,15 +217,12 @@ That is enough to stream. Nothing else is required, and nothing needs a reboot.
 
 ### The resolution the client asked for
 
-**Publish Clarity entries** also wires up the session resize, so there is
-nothing separate to turn on. When a client starts streaming, the streamed
-monitor changes to the resolution that client chose and changes back when the
-stream ends.
+Set your display to it before you start, using whatever manages displays on
+your desktop. Clarity Stream deliberately does not do this for you; the
+reasoning is under "Getting the client's resolution" above.
 
-If you quit the client cleanly the display comes back immediately. If you kill
-it, the display stays small until Sunshine gives up on the session, which takes
-over thirty seconds. `clarity-stream doctor` reports a display left that way,
-and `clarity-stream stream-display stop` puts it back now.
+The client tells you what it is asking for, and says plainly when the host's
+resolution does not match, so a scaled picture never looks like a fault.
 
 ### If a client says the host is not answering
 
@@ -294,9 +278,11 @@ proprietary driver, Limine with a unified kernel image. Everything in
 
 The parts most likely to need work elsewhere:
 
-- **The session resize** is Hyprland-specific. It drives `hl.monitor` through
-  `hyprctl eval`, because Hyprland under a Lua config refuses `hyprctl
-  keyword` outright. Another compositor needs its own path.
+- **Nothing here changes your display.** An earlier version did, and the
+  reason it stopped is worth repeating: a desktop panel that owns the monitor
+  configuration and rewrites it from live state will record a temporary
+  streaming resolution as a permanent choice. That is not unique to one panel
+  or one compositor.
 - **AMD** has one data point now, from a Lenovo laptop with a Lucienne APU
   running the released packages: compositor readback live, no `capture`
   setting needed, and the diagnosis clean apart from the firewall. The

@@ -121,6 +121,12 @@ function applyAll(facts, result, { outputName, dryRun = false, startService = tr
   for (const f of result.findings) {
     const fix = f.fix ?? {};
     if (['sunshine-conf', 'choose-output', 'unpin-output'].includes(fix.kind)) continue; // folded in above
+    if (fix.kind === 'remove-resize-prep') {
+      const r = require('./stream-prep').remove(facts);
+      done.push({ id: f.id, kind: 'remove-resize-prep', ok: true, changed: r.changed,
+                  detail: r.changed ? 'removed the leftover resize prep command' : 'nothing to remove' });
+      continue;
+    }
     if (fix.kind === 'none') continue;
     if (isPrivileged(fix)) { deferred.push({ id: f.id, title: f.title, fix }); continue; }
     if (fix.kind === 'user-service') {

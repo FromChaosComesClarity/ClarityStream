@@ -534,63 +534,6 @@ const FAULTS = [
   },
 
   {
-    id: 'display-left-resized',
-    title: 'The desktop was left at a streaming resolution',
-    severity: SEVERITY.DEGRADED,
-    // The failure mode of resizing a real monitor: if the session ended
-    // without its undo running, the desktop stays at the client's resolution
-    // and the person in front of it has no idea why.
-    detect: (f) => {
-      const s = f.strandedResize;
-      if (!s) return null;
-      // The saved state exists for the whole of a session, because it is what
-      // `stop` restores from. Reading its presence as "a session ended" is
-      // reading a proxy: it is also exactly what a HEALTHY live stream looks
-      // like. Caught while a stream was running and the doctor called the
-      // correct resize a fault.
-      //
-      // The first attempt at this read CLIENT CONNECTED / DISCONNECTED from
-      // the log, and was also wrong: a client can disconnect while the session
-      // stays held, and the display is correctly resized throughout that.
-      if (f.sunshine.sessionBusy === true) return null;
-      const certain = f.sunshine.sessionBusy === false;
-      return {
-        evidence: `${s.connector} was ${s.was} before a stream started, and was never put back.`,
-        detail: (certain
-          ? 'A session ended without restoring it. '
-          : 'No session appears to be running, though that could not be confirmed. ') +
-          'Nothing is broken; the screen is simply ' +
-                'still at the size the client asked for.',
-        fix: { kind: 'restore-display', connector: s.connector, was: s.was }
-      };
-    }
-  },
-
-  {
-    id: 'stream-resize-not-wired',
-    title: 'Nothing will resize the display when a stream starts',
-    severity: SEVERITY.DEGRADED,
-    // Only meaningful under the resize strategy: the entries have to carry a
-    // prep-cmd or nothing happens and the client silently gets a scaled
-    // picture of the whole desktop.
-    detect: (f) => {
-      if (!f.sunshine.installed) return null;
-      if ((f.settings?.strategy ?? 'resize') !== 'resize') return null;
-      const sd = require('./stream-display');
-      const current = (f.sunshine.confRaw ?? '').match(/^\s*global_prep_cmd\s*=\s*(.+?)\s*$/m)?.[1] ?? null;
-      if (sd.globalPrepHasOurs(current, sd.SCRIPT_PATH)) return null;
-      return {
-        evidence: current
-          ? 'Sunshine runs a global prep command, but not the one that resizes the display.'
-          : 'Sunshine has no global prep command, so nothing resizes the display when a stream starts.',
-        detail: 'It has to be global rather than per-app: a client that picks one of Sunshine\u2019s ' +
-                'own tiles would otherwise get the monitor at whatever size it already is.',
-        fix: { kind: 'wire-resize' }
-      };
-    }
-  },
-
-  {
     id: 'stream-ports-ipv4-only',
     title: 'The stream ports are open over IPv4 but not IPv6',
     severity: SEVERITY.DEGRADED,
@@ -608,6 +551,31 @@ const FAULTS = [
         detail: 'A client that reaches this host over IPv6 is dropped, and nothing says so. ' +
                 'Most clients use IPv4 and will not notice.',
         fix: { kind: 'none' }
+      };
+    }
+  },
+
+  {
+    id: 'resize-prep-cmd-left-behind',
+    title: 'Sunshine will run a prep command that no longer exists',
+    severity: SEVERITY.BLOCKER,
+    // Sunshine aborts any session whose prep command exits non-zero, before
+    // the stream ever starts. A global_prep_cmd pointing at the resize script
+    // an older Clarity Stream installed does not merely fail to resize: it
+    // stops every launch, and the client sees a refusal with no explanation.
+    detect: (f) => {
+      if (!f.sunshine.installed) return null;
+      const state = require('./stream-prep').leftover(f);
+      if (!state.present) return null;
+      return {
+        evidence: state.scriptPresent
+          ? 'global_prep_cmd still runs the resize script from a version before 0.8.0.'
+          : 'global_prep_cmd runs a resize script that is no longer installed.',
+        detail: 'The display resize was removed because a desktop whose monitor config is ' +
+                'owned by another tool captures the streaming resolution as though it were a ' +
+                'choice. Sunshine refuses to start a session whose prep command fails, so this ' +
+                'has to go rather than be left to fail quietly.',
+        fix: { kind: 'remove-resize-prep' }
       };
     }
   },

@@ -153,13 +153,13 @@ function describeFix(fix) {
     case 'user-service': return `systemctl --user enable --now ${fix.unit}`;
     case 'install-park-service': return 'install the login service that parks it';
     case 'open-ports': return `open ${fix.ports.map((p) => `${p.port}/${p.proto}`).join(', ')} in ${fix.firewall}`;
-    case 'wire-resize': return 'press Publish below, which also sets the resize step';
     case 'unpin-output': return 'remove output_name; with one display it is only a liability';
     case 'reboot-to-clear-connectors': return 'reboot: the kernel is holding a mode on a port with nothing on it';
     case 'plug-in-ethernet': return `plug a cable into ${fix.ports.join(' or ')}`;
     case 'lower-client-bitrate': return 'lower the bitrate on the client until it holds';
     case 'raise-nice-limit': return 'allow Sunshine to run at a negative nice value';
     case 'install-cuda-build': return 'install a CUDA-enabled Sunshine build (sunshine-bin)';
+    case 'remove-resize-prep': return 'clarity-stream apps --apply (removes it)';
     case 'modprobe-conf': return `write "${fix.line}" to ${fix.path}`;
     case 'target-real-monitor': return 'aim capture at a monitor that is actually being driven';
     default: return fix.kind;

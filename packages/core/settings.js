@@ -10,14 +10,10 @@ const os = require('node:os');
 const FILE = path.join(os.homedir(), '.config', 'clarity-stream', 'settings.json');
 
 const DEFAULTS = {
-  // How a client gets its own resolution.
-  //
-  //   resize   set the streamed monitor to the client's resolution for the
-  //            duration of the session, and put it back afterwards. The
-  //            desktop visibly reflows, twice. Nothing to install, no reboot.
-  //   none     stream whatever the monitor already is and let the client
-  //            scale or letterbox.
-  strategy: 'resize'
+  // Nothing persistent yet. Clarity Stream used to carry a display strategy
+  // here, choosing between resizing the streamed monitor for the duration of
+  // a session and leaving it alone. The resize is gone, so there is nothing
+  // left to choose between.
 };
 
 function read() {

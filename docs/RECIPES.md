@@ -25,6 +25,7 @@ The two rules are Clarity's two rules:
 | `ports-blocked-by-firewall` | blocker | A default-deny firewall with no rule for Sunshine's ports. Every local check still passes, because they all go over loopback; from any other machine the host simply does not answer. |
 | `nvidia-wlr-capture-is-black` | blocker | NVIDIA plus Wayland plus a capture mode that is not `kms`. The stream will connect and show solid black. |
 | `kms-missing-capability` | blocker | `capture = kms` without `cap_sys_admin` on the resolved binary. Fails at init. |
+| `resize-prep-cmd-left-behind` | blocker | `global_prep_cmd` still runs the display-resize script a version before 0.8.0 installed. Sunshine aborts any session whose prep command fails, so this stops every launch rather than failing quietly. |
 | `capture-aimed-at-idle-card` | blocker | Two or more DRM cards and `adapter_name` not pinned to the one driving a display. |
 | `headless-output-cannot-be-captured` | blocker | `output_name` points at a `HEADLESS-*` output, which has no CRTC for KMS to read. |
 | `nvidia-modeset-disabled` | blocker | No DRM modesetting, so there is no scanout buffer at all. |
@@ -77,3 +78,18 @@ desktop so the pointer slid onto it, and a bar panel rewriting the monitor
 config put it back where it had been. Resizing the real display for the
 duration of a session does the same job with nothing installed and nothing to
 undo at boot. See `stream-display.js`.
+
+## Removed in 0.8.0
+
+`display-left-resized` and `stream-resize-not-wired` went with the display
+resize.
+
+Clarity Stream used to set the streamed monitor to the client's resolution for
+the duration of a session and put it back afterwards. On a desktop where
+another tool owns the Hyprland monitor config and rewrites it from **live**
+state, that is unsafe: the streaming resolution gets captured as though it
+were a deliberate choice, and the restore puts the runtime back while the file
+stays wrong. The owner of this machine chose to set the resolution by hand
+instead, which puts the decision in the tool that owns the config.
+
+`resize-prep-cmd-left-behind` exists to clean up after it.

@@ -365,7 +365,6 @@ function probe() {
     firewall: require('./firewall').detect(),
     network: require('./network').detect(),
     settings: require('./settings').read(),
-    strandedResize: require('./stream-display').strandedResize(),
     moonlight: probeMoonlight()
   };
 }
