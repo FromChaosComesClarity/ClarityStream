@@ -76,8 +76,8 @@ and it cost a kernel parameter, a reboot, and a compositor that kept forming
 opinions about the extra output: it took a workspace, it sat adjacent to the
 desktop so the pointer slid onto it, and a bar panel rewriting the monitor
 config put it back where it had been. Resizing the real display for the
-duration of a session does the same job with nothing installed and nothing to
-undo at boot. See `stream-display.js`.
+duration of a session did the same job with nothing installed and nothing to
+undo at boot. That replacement is also gone; see "Removed in 0.8.0" below.
 
 ## Removed in 0.8.0
 

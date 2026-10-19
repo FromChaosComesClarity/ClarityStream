@@ -383,12 +383,13 @@ the desktop has an opinion about.
 Then it broke the machine's display configuration badly enough that the
 owner's instruction was to disable it, which is the measurement that mattered.
 
-The replacement is `stream-display.js`: record the streamed monitor's mode,
+The replacement was `stream-display.js`, itself removed in 0.8.0; see part
+eleven. It recorded the streamed monitor's mode,
 position and scale to disk, set the mode the client asked for, put it back
 when the session ends. It needs no root, no reboot, nothing in the boot path,
 and it has one failure mode rather than four. A hard-killed client leaves the
 display small until Sunshine's session timeout, which `display-left-resized`
-reports and `clarity-stream stream-display stop` fixes immediately.
+reported and `clarity-stream stream-display stop` fixed immediately.
 
 ## What the removal also exposed
 
@@ -851,3 +852,70 @@ Running tally, every one found by hardware changing or by another machine:
 | part nine | a link's variance | the link's floor |
 | part ten | a state file's existence | whether a session is held |
 | part ten | client connect events | whether a session is held |
+
+# Part eleven: the second display mechanism, removed for the same shape of reason
+
+2026-10-19. The resize is gone, five days after the phantom it replaced.
+
+## What it did and why it stopped
+
+It set the streamed monitor to the client's resolution when a session started
+and put it back when it ended. Measured working on hardware, twice, including
+a full session driven from another room.
+
+What undid it was not in Sunshine or in the compositor. On this desktop the
+`im0001gt.screens` bar panel owns `~/.config/hypr/monitors.lua` and rewrites
+it from **live** monitor state. Its `scale_step`:
+
+```python
+def scale_step(requested):
+    data = snapshot()                 # live state, from hyprctl
+    monitors = data.get("monitors") or []
+    ...
+    focused["scale"] = hypr_clean_scale(preset, width, height)
+    return apply({"monitors": monitors}, gdk=gdk)   # writes EVERY monitor's mode
+```
+
+It reads live state, changes only the scale, and writes every monitor's
+current **mode** along with it. Press `SUPER + SLASH` during a stream and
+`mode = "1920x1080@60.00"` lands in `monitors.lua` as a deliberate choice. The
+restore afterwards puts the runtime back and cannot undo the file.
+
+That keybind is reachable from the client, because this project forwards
+shortcuts to the host, and a stream that looks wrong is exactly the moment
+somebody reaches for a scale control.
+
+The same file had already produced a black boot, from an unrelated cause: a
+transient display drop captured as `disabled = true`, recovered from a TTY.
+Clarity Stream was investigated and correctly cleared of that one. It remains
+the wrong file for a streaming tool to be writing into.
+
+## The rule, learned twice
+
+A streaming tool has no business holding temporary state in configuration that
+something else treats as permanent. The phantom display held it in the kernel
+command line. The resize held it in live compositor state that a panel
+persists. Both were undone by a consequence that was not visible from inside
+the feature.
+
+The host now changes no display state. The person sets the resolution through
+whatever owns that configuration on their desktop, which is both safer and the
+correct layering.
+
+## The part that could not simply be deleted
+
+**Sunshine aborts any session whose prep command exits non-zero.** A
+`global_prep_cmd` left pointing at the removed script does not fail to resize;
+it stops every launch, before any picture is attempted, with the client seeing
+a refusal and no reason.
+
+So removing the feature required removing its installation, which is
+`stream-prep.js` and the blocker `resize-prep-cmd-left-behind`. It takes only
+our own entry out of the list, keeps anything else, refuses to rewrite a prep
+command it cannot parse, and deletes the script. Deleting a feature without
+uninstalling it would have been worse than keeping the feature.
+
+| | held temporary state in | undone by |
+| --- | --- | --- |
+| phantom display | the kernel command line | a compositor with opinions about an extra output |
+| display resize | live compositor state | a panel that persists live state as intent |
