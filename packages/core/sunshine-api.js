@@ -60,26 +60,84 @@ async function checkCredentials(creds) {
   if (r.ok) return { ok: true };
   if (r.status === 401) return { ok: false, reason: 'Sunshine did not accept that username and password.' };
   if (r.status === 0) return { ok: false, reason: `Could not reach Sunshine on ${HOST}:${PORT}. Is it running?` };
-  return { ok: false, reason: `Sunshine answered ${r.status}.` };
+  return { ok: false, reason: explain(r) };
+}
+
+// What a failed request actually said, rather than only its status code.
+// "Sunshine answered 400." sent somebody looking in the wrong place for an
+// hour when Sunshine was explaining itself in the body the whole time.
+function explain(r, fallback) {
+  const said = r.json?.error ?? r.json?.message ?? r.json?.status_message
+    ?? (typeof r.raw === 'string' && r.raw.trim() && !r.raw.trim().startsWith('<')
+      ? r.raw.trim().slice(0, 200) : null);
+  return said ? `Sunshine answered ${r.status}: ${said}` : (fallback ?? `Sunshine answered ${r.status}.`);
+}
+
+// Sunshine 2026.914 changed pairing. A client that asks to pair creates a
+// PENDING PAIRING with an id, and the PIN has to be submitted against that
+// id. Submitting a PIN alone, which is what every earlier version wanted and
+// what this module used to send, is now a 400.
+//
+// Taken from Sunshine's own web UI rather than guessed:
+//   GET    /api/pin  -> { pairings: [ { id, ... } ] }
+//   POST   /api/pin  <- { pairing_id, pin, name }
+//   DELETE /api/pin  <- { pairing_id }
+async function listPendingPairings(creds, { request: send = request } = {}) {
+  const r = await send('GET', '/api/pin', creds);
+  if (r.status === 401) return { ok: false, reason: 'Sunshine rejected the credentials.' };
+  if (r.status === 404) {
+    return {
+      ok: false,
+      reason: 'This Sunshine does not list pending pairings, so it is older than 2026.914. ' +
+              'Pairing through this window needs that version or newer.'
+    };
+  }
+  if (!r.ok) return { ok: false, reason: explain(r) };
+  return { ok: true, pairings: Array.isArray(r.json?.pairings) ? r.json.pairings : [] };
 }
 
 // The whole point of this module. The client shows a PIN; this sends it.
-async function submitPin(pin, deviceName, creds) {
+async function submitPin(pin, deviceName, creds, { pairingId, request: send = request } = {}) {
   if (!/^\d{4}$/.test(String(pin ?? ''))) {
     return { ok: false, reason: 'A pairing PIN is four digits.' };
   }
-  const r = await request('POST', '/api/pin', {
+
+  // Which pending request this PIN belongs to. With one waiting there is no
+  // choice to make, which is also what Sunshine's own interface does.
+  let id = pairingId;
+  if (!id) {
+    const pending = await listPendingPairings(creds, { request: send });
+    if (!pending.ok) return pending;
+    if (pending.pairings.length === 0) {
+      return {
+        ok: false,
+        reason: 'No device is waiting to pair. Press Pair on the other device first, ' +
+                'then type the four digits it shows.'
+      };
+    }
+    if (pending.pairings.length > 1) {
+      return {
+        ok: false,
+        reason: `${pending.pairings.length} devices are waiting to pair. Finish or cancel the ` +
+                'others first, so the PIN cannot be matched to the wrong one.',
+        pairings: pending.pairings
+      };
+    }
+    id = pending.pairings[0].id;
+  }
+
+  const r = await send('POST', '/api/pin', {
     ...creds,
-    body: { pin: String(pin), name: deviceName || 'Clarity Stream device' }
+    body: { pairing_id: id, pin: String(pin), name: deviceName || 'Clarity Stream device' }
   });
   if (r.status === 401) return { ok: false, reason: 'Sunshine rejected the credentials.' };
-  if (!r.ok) return { ok: false, reason: r.error ?? `Sunshine answered ${r.status}.` };
+  if (!r.ok) return { ok: false, reason: explain(r) };
 
   // Sunshine answers 200 with {"status": false} when the PIN does not match a
   // waiting request, so the status code alone is not the answer.
   const accepted = r.json?.status === true || r.json?.status === 'true';
   return accepted
-    ? { ok: true }
+    ? { ok: true, pairingId: id }
     : {
         ok: false,
         reason: 'Sunshine did not accept that PIN. It expires quickly, and the client has to be ' +
@@ -87,9 +145,19 @@ async function submitPin(pin, deviceName, creds) {
       };
 }
 
+// Letting go of a request that will never be completed, so the next one is
+// unambiguous. Sunshine refuses a PIN when it cannot tell which pending
+// pairing it belongs to.
+async function cancelPairing(pairingId, creds, { request: send = request } = {}) {
+  const r = await send('DELETE', '/api/pin', { ...creds, body: { pairing_id: pairingId } });
+  if (r.status === 401) return { ok: false, reason: 'Sunshine rejected the credentials.' };
+  if (!r.ok) return { ok: false, reason: explain(r) };
+  return { ok: r.json?.status === true, reason: r.json?.status === true ? null : 'Sunshine refused.' };
+}
+
 async function listClients(creds) {
   const r = await request('GET', '/api/clients/list', creds);
-  if (!r.ok) return { ok: false, reason: r.error ?? `Sunshine answered ${r.status}.`, clients: [] };
+  if (!r.ok) return { ok: false, reason: r.error ?? explain(r), clients: [] };
   const certs = r.json?.named_certs ?? [];
   return {
     ok: true,
@@ -100,7 +168,7 @@ async function listClients(creds) {
 async function unpairClient(uuid, creds) {
   if (!uuid) return { ok: false, reason: 'No device given.' };
   const r = await request('POST', '/api/clients/unpair', { ...creds, body: { uuid } });
-  if (!r.ok) return { ok: false, reason: r.error ?? `Sunshine answered ${r.status}.` };
+  if (!r.ok) return { ok: false, reason: r.error ?? explain(r) };
   return { ok: r.json?.status !== false, reason: r.json?.status === false ? 'Sunshine refused.' : null };
 }
 
@@ -138,7 +206,7 @@ function sessionState({ timeout = 4000 } = {}) {
 async function closeSession(creds) {
   const r = await request('POST', '/api/apps/close', creds);
   if (r.status === 401) return { ok: false, reason: 'Sunshine rejected the credentials.' };
-  if (!r.ok) return { ok: false, reason: r.error ?? `Sunshine answered ${r.status}.` };
+  if (!r.ok) return { ok: false, reason: r.error ?? explain(r) };
   return { ok: r.json?.status !== false, reason: r.json?.status === false ? 'Sunshine refused.' : null };
 }
 
@@ -176,6 +244,7 @@ async function closeSessionAndConfirm(creds, {
 }
 
 module.exports = {
-  request, checkCredentials, submitPin, listClients, unpairClient,
+  request, checkCredentials, submitPin, listPendingPairings, cancelPairing,
+  listClients, unpairClient, explain,
   sessionState, closeSession, closeSessionAndConfirm, HOST, PORT
 };

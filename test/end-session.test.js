@@ -122,3 +122,54 @@ test('credentials Sunshine rejects are reported, and nothing is claimed about th
   assert.strictEqual(r.ended, false);
   assert.match(r.reason, /rejected the credentials/i);
 });
+
+// Sunshine 2026.914 changed pairing: a client that asks to pair creates a
+// PENDING PAIRING with an id, and the PIN must be submitted against that id.
+// Sending a PIN alone, which every earlier version wanted and which this
+// module used to send, is a 400. Found by a Mac failing to pair with
+// "Sunshine answered 400." and nothing else, because the body explaining it
+// was being thrown away.
+const api = require('../packages/core/sunshine-api');
+
+test('a PIN is submitted against the pending pairing it belongs to', async () => {
+  const seen = [];
+  const fake = async (method, path, opts) => {
+    seen.push([method, path, opts.body]);
+    if (method === 'GET') return { ok: true, status: 200, json: { pairings: [{ id: 'abc' }] } };
+    return { ok: true, status: 200, json: { status: true } };
+  };
+  const r = await api.submitPin('1249', 'MacBook', { username: 'u', password: 'p' }, { request: fake });
+  assert.strictEqual(r.ok, true, r.reason);
+  const post = seen.find((s) => s[0] === 'POST');
+  assert.strictEqual(post[2].pairing_id, 'abc', 'the id must be sent or Sunshine answers 400');
+  assert.strictEqual(post[2].pin, '1249');
+  assert.strictEqual(post[2].name, 'MacBook');
+});
+
+test('no device waiting is said plainly, not sent and refused', async () => {
+  const fake = async () => ({ ok: true, status: 200, json: { pairings: [] } });
+  const r = await api.submitPin('1249', 'MacBook', {}, { request: fake });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /No device is waiting/i);
+});
+
+test('several devices waiting refuses rather than guessing', async () => {
+  // Matching a PIN to the wrong pending request would pair the wrong machine.
+  const fake = async () => ({ ok: true, status: 200, json: { pairings: [{ id: 'a' }, { id: 'b' }] } });
+  const r = await api.submitPin('1249', 'MacBook', {}, { request: fake });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /2 devices are waiting/i);
+});
+
+test('a failure explains what Sunshine said, not just its status', async () => {
+  const fake = async () => ({ ok: false, status: 400, json: { error: 'missing pairing_id' }, raw: '' });
+  const r = await api.submitPin('1249', 'MacBook', {}, { request: fake });
+  assert.match(r.reason, /400/);
+  assert.match(r.reason, /missing pairing_id/, 'the body is the useful part and was being discarded');
+});
+
+test('an older Sunshine is named as the problem rather than reported as a 404', async () => {
+  const fake = async () => ({ ok: false, status: 404, json: null, raw: '' });
+  const r = await api.listPendingPairings({});
+  assert.strictEqual(r.ok, false);
+});

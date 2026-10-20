@@ -93,3 +93,13 @@ stays wrong. The owner of this machine chose to set the resolution by hand
 instead, which puts the decision in the tool that owns the config.
 
 `resize-prep-cmd-left-behind` exists to clean up after it.
+
+## A note on Sunshine versions
+
+Pairing through this window needs **Sunshine 2026.914 or newer**. That release
+changed the pairing API: a client asking to pair creates a *pending pairing*
+with an id, and the PIN must be submitted against that id. Earlier versions
+took a PIN alone, which newer ones answer with `400`.
+
+Clarity Stream implements the newer flow only, and says so plainly when it
+finds an older Sunshine rather than failing with a status code.
